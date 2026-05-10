@@ -1,0 +1,25 @@
+# Byte-compiled / optimized
+__pycache__/
+*.pyc
+*.pyo
+
+# Local cache — contains personal match history
+facecheck_cache.json
+facecheck_brain.json
+
+# Claude Code
+.claude/
+
+# Session logs
+CC-Session-Logs/
+C ScriptsCC-Session-Logs/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local config override (use config.py as the template)
+config_local.py
