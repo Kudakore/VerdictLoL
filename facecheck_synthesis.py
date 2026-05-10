@@ -936,7 +936,7 @@ if __name__ == "__main__":
     from facecheck_engine_draft import DraftEngine
 
     try:
-        with open("C:\\Scripts\\facecheck_cache.json", 'r') as f:
+        with open("C:\\Facecheck\\facecheck_cache.json", 'r') as f:
             cache = json.load(f)
         games = cache.get("games", [])
         player_id = cache.get("puuid", "test_player")

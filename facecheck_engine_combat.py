@@ -335,7 +335,7 @@ class CombatEngine:
         }
 
 
-def run_combat_engine(cache_path: str = "C:\\Scripts\\facecheck_cache.json") -> Optional[EngineOutput]:
+def run_combat_engine(cache_path: str = "C:\\Facecheck\\facecheck_cache.json") -> Optional[EngineOutput]:
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)

@@ -1,7 +1,7 @@
 import requests
 import sys
 
-import sys, os; sys.path.insert(0, "C:\\Scripts")
+import sys, os; sys.path.insert(0, "C:\\Facecheck")
 from config import API_KEY, REGION, PLATFORM
 
 HEADERS = {"X-Riot-Token": API_KEY}

@@ -9,7 +9,7 @@ import sys
 # CONFIG
 # ─────────────────────────────────────────────
 
-VAULT = "C:\\LeagueVault"
+VAULT = "C:\\Facecheck\\LeagueVault"
 
 STYLE_ARCHETYPES = {
     1:  "Hypercarry Skirmisher",

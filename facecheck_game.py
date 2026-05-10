@@ -12,7 +12,7 @@ from facecheck_data import get_current_rank_string
 
 # Champion Intelligence — optional, graceful fallback if vault not available
 try:
-    sys.path.insert(0, "C:\\Scripts")
+    sys.path.insert(0, "C:\\Facecheck")
     from facecheck_champ_intel import (
         get_matchup_context, print_matchup_context,
         print_counter_command, print_intel_profile,
@@ -24,7 +24,7 @@ except Exception:
 
 # Synthesis Layer — 7 Domain-Pure Engines
 try:
-    sys.path.insert(0, "C:\\Scripts")
+    sys.path.insert(0, "C:\\Facecheck")
     from facecheck_engine_death import run_death_engine
     from facecheck_engine_economy import run_economy_engine
     from facecheck_engine_combat import run_combat_engine

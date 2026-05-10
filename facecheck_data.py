@@ -8,7 +8,7 @@ from datetime import datetime
 from config import API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE
 GAME_NAME = MY_GAME_NAME
 TAG_LINE  = MY_TAG_LINE
-CACHE_PATH = "C:\\Scripts\\facecheck_cache.json"
+CACHE_PATH = "C:\\Facecheck\\facecheck_cache.json"
 
 HEADERS = {"X-Riot-Token": API_KEY}
 QUEUE_FILTERS = [420, 440]

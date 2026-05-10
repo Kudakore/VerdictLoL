@@ -14,7 +14,7 @@ import statistics
 from collections import defaultdict
 
 
-BRAIN_PATH = "C:\\Scripts\\facecheck_brain.json"
+BRAIN_PATH = "C:\\Facecheck\\facecheck_brain.json"
 
 
 @dataclass
@@ -404,7 +404,7 @@ if __name__ == "__main__":
     import json
 
     try:
-        with open("C:\\Scripts\\facecheck_cache.json", 'r') as f:
+        with open("C:\\Facecheck\\facecheck_cache.json", 'r') as f:
             cache = json.load(f)
         games = cache.get("games", [])
         player_id = cache.get("puuid", "test_player")

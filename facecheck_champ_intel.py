@@ -19,7 +19,7 @@ if hasattr(sys.stderr, "reconfigure"):
 # CONFIG
 # ─────────────────────────────────────────────
 
-VAULT_PATH = "C:\\LeagueVault\\Champions"
+VAULT_PATH = "C:\\Facecheck\\LeagueVault\\Champions"
 
 CHAMPION_ALIASES = {
     "MonkeyKing":  "Wukong",

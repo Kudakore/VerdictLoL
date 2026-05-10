@@ -21,7 +21,7 @@ if hasattr(sys.stderr, "reconfigure"):
 # ─────────────────────────────────────────────────────────────────
 
 import os
-sys.path.insert(0, "C:\\Scripts")
+sys.path.insert(0, "C:\\Facecheck")
 from facecheck_game import print_matchups
 
 try:
