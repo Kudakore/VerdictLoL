@@ -2,7 +2,10 @@
 
 A personal League of Legends diagnostic system. Analyzes your match history to surface causal relationships between early-game decisions and outcomes — not just stats, but *why* you lost.
 
-Designed for junglers. Works for any role.
+Designed for junglers at heart. Works for any role just the same.
+
+Status: Work in Progress (Super Duper Alpha)
+- As a CLI tool, it pretty much works. It is being configured and refined every day. The goal is to have a coaching companion app that does what no other companion app comes close to, besides sitting down and watching your gameplay with you.
 
 ## Features
 
@@ -11,6 +14,7 @@ Designed for junglers. Works for any role.
 - **Scout any player** by Riot ID with matchup breakdowns
 - **Champion pool health report** with verdict ratings (PLAY / SOLID / CONDITIONAL / AVOID)
 - **Champion intel vault** with matchup context and counter recommendations
+- **Item and Component intel** with an entire breakdown of stats, costs, passives, etc
 
 ## Setup
 
