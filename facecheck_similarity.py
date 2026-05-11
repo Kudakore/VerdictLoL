@@ -12,8 +12,10 @@ so a 0.9 means "top 10% of your games" regardless of raw scale.
 
 Session 1: Fingerprint extraction + nearest neighbor search
 Session 2: Clustering + cluster-level outcome analysis
-Session 3: Matched comparison for counterfactual reasoning
+Session 3: Matched comparison for counterfactual reasoning + signal discovery
 """
+
+from __future__ import annotations
 
 import json
 import math
@@ -363,6 +365,102 @@ class SimilarityEngine:
         delta_factor = min(abs(delta) / 0.20, 1.0) * 0.3
         return round(n_factor + matched_factor + delta_factor, 3)
 
+    def discover_signals(
+        self,
+        queries: Optional[List[SignalQuery]] = None,
+        confidence_threshold: float = 0.60,
+        delta_threshold: float = 0.08,
+        max_results: int = 20
+    ) -> List[DiscoveredSignal]:
+        """
+        Run a suite of signal queries through matched comparison.
+        Returns only signals that pass statistical gating.
+
+        Default queries come from Win Impact patterns validated in Session 1.
+        Each signal must have:
+          - Enough signal games (min_games on SignalQuery)
+          - Confidence >= confidence_threshold
+          - |delta| >= delta_threshold
+        """
+        if not self.fingerprints:
+            raise ValueError("Must call analyze() before discover_signals()")
+
+        if queries is None:
+            queries = _build_signal_queries()
+
+        results = []
+
+        for sq in queries:
+            result = self.matched_comparison(
+                signal_fn=sq.signal_fn,
+                k=30,
+                min_games=sq.min_games
+            )
+
+            if result is None:
+                continue  # insufficient games
+
+            if result.confidence < confidence_threshold:
+                continue
+
+            if abs(result.delta) < delta_threshold:
+                continue
+
+            interpretation = self._interpret_signal(sq.name, sq.category, result)
+
+            results.append(DiscoveredSignal(
+                name=sq.name,
+                description=sq.description,
+                category=sq.category,
+                signal_games=result.signal_games,
+                win_rate_with_signal=result.win_rate_with_signal,
+                win_rate_matched=result.win_rate_matched_comparison,
+                delta=result.delta,
+                confidence=result.confidence,
+                interpretation=interpretation
+            ))
+
+        # Sort: harmful first, then helpful, by confidence
+        def sort_key(s: DiscoveredSignal) -> Tuple[int, float]:
+            order = {"harmful": 0, "neutral": 1, "helpful": 2}
+            return (order.get(s.category, 1), -s.confidence)
+
+        results.sort(key=sort_key)
+        return results[:max_results]
+
+    def _interpret_signal(self, name: str, category: str, result: "MatchedComparisonResult") -> str:
+        """Generate a human-readable interpretation of a signal result."""
+        direction = "increases" if result.delta > 0 else "decreases"
+        delta_pct = abs(result.delta) * 100
+
+        if category == "harmful":
+            if result.delta < -0.10:
+                return (f"When you have this pattern, your WR drops {delta_pct:.1f}% "
+                        f"({result.win_rate_with_signal:.0%} vs {result.win_rate_matched_comparison:.0%} on similar games). "
+                        f"This is a reliable loss pattern.")
+            elif result.delta < -0.05:
+                return (f"This pattern is associated with a {delta_pct:.1f}% WR decrease "
+                        f"({result.win_rate_with_signal:.0%} vs {result.win_rate_matched_comparison:.0%}). "
+                        f"Consider addressing this in game.")
+            else:
+                return (f"This pattern has a small ({delta_pct:.1f}%) negative association with WR, "
+                        f"but may be recoverable with good fundamentals.")
+        elif category == "helpful":
+            if result.delta > 0.10:
+                return (f"When you have this pattern, your WR improves by {delta_pct:.1f}% "
+                        f"({result.win_rate_with_signal:.0%} vs {result.win_rate_matched_comparison:.0%} on similar games). "
+                        f"This is a reliable winning pattern.")
+            elif result.delta > 0.05:
+                return (f"This pattern is associated with a {delta_pct:.1f}% WR increase "
+                        f"({result.win_rate_with_signal:.0%} vs {result.win_rate_matched_comparison:.0%}). "
+                        f"Build around this strength.")
+            else:
+                return (f"This pattern shows a small positive association with WR, "
+                        f"but isn't a primary driver of wins.")
+        else:
+            return (f"No strong directional relationship found. "
+                    f"Delta: {result.delta:+.1%} (confidence: {result.confidence:.2f})")
+
     def cluster(self, min_k: int = 3, max_k: int = 12) -> "ClusteringOutput":
         """
         Cluster all games by fingerprint similarity using K-Means.
@@ -630,6 +728,161 @@ class SimilarityEngine:
 
 
 @dataclass
+class SignalQuery:
+    """A signal to test via matched comparison."""
+    name: str
+    description: str
+    signal_fn: object  # callable(game) -> bool
+    min_games: int     # minimum signal games required
+
+    # For filtering/labeling
+    category: str      # "harmful" | "helpful" | "neutral"
+
+
+@dataclass
+class DiscoveredSignal:
+    """A signal that passed statistical gating and has a meaningful delta."""
+    name: str
+    description: str
+    category: str
+    signal_games: int
+    win_rate_with_signal: float
+    win_rate_matched: float
+    delta: float
+    confidence: float
+    interpretation: str  # human-readable finding
+
+    @property
+    def is_significant(self) -> bool:
+        return self.confidence >= 0.60 and abs(self.delta) >= 0.08
+
+    @property
+    def strength_label(self) -> str:
+        if self.confidence >= 0.90:
+            return "HIGH CONFIDENCE"
+        elif self.confidence >= 0.70:
+            return "MODERATE CONFIDENCE"
+        else:
+            return "LOW CONFIDENCE"
+
+
+def _build_signal_queries() -> List[SignalQuery]:
+    """Standard suite of signal queries based on Win Impact patterns."""
+    queries = []
+
+    # ── Harmful signals ───────────────────────────────
+    queries.append(SignalQuery(
+        name="8+ deaths",
+        description="Died 8 or more times in a game",
+        signal_fn=lambda g: (g.get("deaths") or 0) >= 8,
+        min_games=20,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="5+ deaths",
+        description="Died 5 or more times in a game",
+        signal_fn=lambda g: (g.get("deaths") or 0) >= 5,
+        min_games=30,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="3+ early deaths",
+        description="Died 3 or more times before 10 minutes",
+        signal_fn=lambda g: (g.get("early_deaths") or 0) >= 3,
+        min_games=30,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="Gold deficit early",
+        description="Gold deficit of 500+ at 15 minutes",
+        signal_fn=lambda g: (g.get("gold_lead_15") or 0) <= -500,
+        min_games=20,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="CS deficit early",
+        description="Fewer than 35 CS at 10 minutes",
+        signal_fn=lambda g: (g.get("cs_10") or 0) < 35,
+        min_games=15,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="CS deficit mid",
+        description="Fewer than 80 CS at 15 minutes",
+        signal_fn=lambda g: (g.get("cs_at_15") or 0) < 80,
+        min_games=15,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="Low vision (total <30)",
+        description="Total vision score below 30",
+        signal_fn=lambda g: (g.get("vision") or 0) < 30 and (g.get("vision") or 0) > 0,
+        min_games=15,
+        category="harmful"
+    ))
+    queries.append(SignalQuery(
+        name="Blue side",
+        description="Playing on blue side",
+        signal_fn=lambda g: g.get("side") == "blue",
+        min_games=30,
+        category="neutral"  # direction TBD by result
+    ))
+
+    # ── Helpful signals ────────────────────────────────
+    queries.append(SignalQuery(
+        name="Gold lead early",
+        description="Gold lead of 500+ at 15 minutes",
+        signal_fn=lambda g: (g.get("gold_lead_15") or 0) >= 500,
+        min_games=20,
+        category="helpful"
+    ))
+    queries.append(SignalQuery(
+        name="Gold lead mid",
+        description="Gold lead of 1000+ at 15 minutes",
+        signal_fn=lambda g: (g.get("gold_lead_15") or 0) >= 1000,
+        min_games=10,
+        category="helpful"
+    ))
+    queries.append(SignalQuery(
+        name="2+ turret kills",
+        description="Took down 2 or more turrets",
+        signal_fn=lambda g: (g.get("turret_kills") or 0) >= 2,
+        min_games=20,
+        category="helpful"
+    ))
+    queries.append(SignalQuery(
+        name="High kill participation",
+        description="Kill participation 60% or higher",
+        signal_fn=lambda g: (g.get("kp_pct") or 0) >= 0.60 and (g.get("kp_pct") or 0) < 1.0,
+        min_games=15,
+        category="helpful"
+    ))
+    queries.append(SignalQuery(
+        name="0-2 deaths (low deaths)",
+        description="Died 2 or fewer times — survived well",
+        signal_fn=lambda g: (g.get("deaths") or 0) <= 2,
+        min_games=20,
+        category="helpful"
+    ))
+    queries.append(SignalQuery(
+        name="Snowball lead (largest_killing_spree >= 4)",
+        description="Had a killing spree of 4+ — were snowballing",
+        signal_fn=lambda g: (g.get("largest_killing_spree") or 0) >= 4,
+        min_games=20,
+        category="helpful"
+    ))
+    queries.append(SignalQuery(
+        name="Vision heavy (vision >= 40)",
+        description="Vision score of 40 or higher",
+        signal_fn=lambda g: (g.get("vision") or 0) >= 40,
+        min_games=15,
+        category="helpful"
+    ))
+
+    return queries
+
+
+@dataclass
 class MatchedComparisonResult:
     """Result of a matched comparison query."""
     signal_games: int
@@ -743,7 +996,7 @@ if __name__ == "__main__":
 
     print(f"Best K={clustering.k_best} (silhouette={clustering.silhouette_score:.3f})")
     print()
-    print(f"{'='*60}")
+    print("=" * 60)
     for c in clustering.clusters:
         print(f"Cluster {c.cluster_id}: {c.behavioral_label}")
         print(f"  {c.total_games} games | WR: {c.win_rate:.1%} | {c.wins}W/{c.losses}L")
@@ -752,3 +1005,24 @@ if __name__ == "__main__":
         print(f"  Centroid: agg={fp.aggression:.2f} eff={fp.efficiency:.2f} "
               f"obj={fp.objective_race:.2f} col={fp.collapse:.2f} vis={fp.vision:.2f}")
         print()
+
+    # Run signal discovery
+    print("=" * 60)
+    print("Running signal discovery...")
+    signals = engine.discover_signals(
+        confidence_threshold=0.60,
+        delta_threshold=0.08
+    )
+
+    if not signals:
+        print("No signals passed statistical gating at current thresholds.")
+    else:
+        print(f"\n{len(signals)} signals passed gating (conf>=0.60, |delta|>=8%):")
+        print()
+        for s in signals:
+            cat_marker = "[HARMFUL]" if s.category == "harmful" else "[HELPFUL]" if s.category == "helpful" else "[NEUTRAL]"
+            print(f"{cat_marker} {s.name} ({s.signal_games} games)")
+            print(f"  WR with signal: {s.win_rate_with_signal:.1%} | WR matched: {s.win_rate_matched:.1%} | Delta: {s.delta:+.1%}")
+            print(f"  Confidence: {s.confidence:.2f} | {s.strength_label}")
+            print(f"  {s.interpretation}")
+            print()
