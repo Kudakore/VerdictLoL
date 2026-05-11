@@ -17,6 +17,7 @@ Session 3: Matched comparison for counterfactual reasoning
 
 import json
 import math
+import random
 import statistics
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
@@ -362,6 +363,266 @@ class SimilarityEngine:
         delta_factor = min(abs(delta) / 0.20, 1.0) * 0.3
         return round(n_factor + matched_factor + delta_factor, 3)
 
+    def cluster(self, min_k: int = 3, max_k: int = 12) -> "ClusteringOutput":
+        """
+        Cluster all games by fingerprint similarity using K-Means.
+        Automatically selects the best K using silhouette score.
+        Labels each cluster by its dominant behavioral characteristic.
+        Pure Python implementation — no sklearn needed.
+        """
+        if not self.fingerprints:
+            raise ValueError("Must call analyze() before cluster()")
+
+        player_id = self.player_id
+        n_games = len(self.fingerprints)
+
+        # Build feature vectors
+        features = []
+        for fp in self.fingerprints:
+            features.append([
+                fp.aggression,
+                fp.efficiency,
+                fp.objective_race,
+                fp.collapse,
+                fp.vision
+            ])
+
+        # Find best K using silhouette score
+        best_score = -1
+        best_k = min_k
+        scores_by_k = {}
+
+        for k in range(min_k, min(max_k + 1, n_games)):
+            labels = self._kmeans_predict(features, k, n_iter=30)
+            if len(set(labels)) < 2:
+                scores_by_k[k] = 0.0
+                continue
+            score = self._silhouette_score(features, labels)
+            scores_by_k[k] = score
+            if score > best_score:
+                best_score = score
+                best_k = k
+
+        # Final clustering with best K
+        final_labels = self._kmeans_predict(features, best_k, n_iter=50)
+
+        # Build cluster results
+        cluster_map: Dict[int, List[int]] = {}
+        for i, label in enumerate(final_labels):
+            if label not in cluster_map:
+                cluster_map[label] = []
+            cluster_map[label].append(i)
+
+        clusters = []
+        for cid in sorted(cluster_map.keys()):
+            indices = cluster_map[cid]
+            fps = [self.fingerprints[i] for i in indices]
+
+            wins = sum(1 for i in indices if self.fingerprints[i].win)
+            losses = len(indices) - wins
+            wr = wins / len(indices) if indices else 0.0
+
+            # Dominant champion
+            champ_counts: Dict[str, int] = {}
+            for fp in fps:
+                champ_counts[fp.champion] = champ_counts.get(fp.champion, 0) + 1
+            dom_champ = max(champ_counts, key=champ_counts.get) if champ_counts else "Unknown"
+            dom_pct = champ_counts[dom_champ] / len(fps) if fps else 0
+
+            # Mean fingerprint (centroid)
+            mean_agg = statistics.mean(f.aggression for f in fps) if fps else 0.5
+            mean_eff = statistics.mean(f.efficiency for f in fps) if fps else 0.5
+            mean_obj = statistics.mean(f.objective_race for f in fps) if fps else 0.5
+            mean_col = statistics.mean(f.collapse for f in fps) if fps else 0.5
+            mean_vis = statistics.mean(f.vision for f in fps) if fps else 0.5
+
+            mean_fp = GameFingerprint(
+                match_id="centroid",
+                champion=dom_champ,
+                win=wr > 0.5,
+                duration_min=statistics.mean(f.duration_min for f in fps) if fps else 0,
+                aggression=round(mean_agg, 4),
+                efficiency=round(mean_eff, 4),
+                objective_race=round(mean_obj, 4),
+                collapse=round(mean_col, 4),
+                vision=round(mean_vis, 4),
+                raw_kills_pm=0, raw_assists_pm=0, raw_damage_pm=0,
+                raw_cs_pm=0, raw_cs_10=0, raw_turret_kills=0,
+                raw_lks=0, raw_gold_lead_15=0, raw_vision_pm=0, raw_wards_placed=0
+            )
+
+            label = self._label_cluster(mean_fp, wr)
+
+            clusters.append(ClusterResult(
+                cluster_id=cid,
+                games=fps,
+                win_rate=round(wr, 3),
+                total_games=len(indices),
+                wins=wins,
+                losses=losses,
+                dominant_champion=dom_champ,
+                dominant_champion_pct=round(dom_pct, 3),
+                mean_fingerprint=mean_fp,
+                behavioral_label=label
+            ))
+
+        # Sort clusters by win rate descending
+        clusters.sort(key=lambda c: c.win_rate, reverse=True)
+        for i, c in enumerate(clusters):
+            c.cluster_id = i
+
+        return ClusteringOutput(
+            player_id=player_id,
+            timestamp=datetime.now(),
+            total_games=n_games,
+            clusters=clusters,
+            k_best=best_k,
+            silhouette_score=round(best_score, 4),
+            fingerprints=self.fingerprints
+        )
+
+    def _kmeans_predict(self, vectors: List[List[float]], k: int, n_iter: int) -> List[int]:
+        """Pure-python K-Means clustering. Returns cluster labels."""
+        if k >= len(vectors):
+            return [0] * len(vectors)
+
+        # Initialize centroids randomly from data points
+        centroids = [list(vectors[i]) for i in random.sample(range(len(vectors)), k)]
+
+        for _ in range(n_iter):
+            # Assign each vector to nearest centroid
+            labels = []
+            for v in vectors:
+                dists = [self._euclidean(v, c) for c in centroids]
+                labels.append(dists.index(min(dists)))
+
+            # Recompute centroids
+            new_centroids = []
+            for cluster_id in range(k):
+                members = [vectors[i] for i in range(len(vectors)) if labels[i] == cluster_id]
+                if members:
+                    new_centroids.append([
+                        statistics.mean(m[d] for m in members)
+                        for d in range(len(vectors[0]))
+                    ])
+                else:
+                    # Empty cluster — re-init with random point
+                    new_centroids.append(list(random.choice(vectors)))
+            centroids = new_centroids
+
+        return labels
+
+    def _euclidean(self, a: List[float], b: List[float]) -> float:
+        return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(len(a))))
+
+    def _silhouette_score(self, vectors: List[List[float]], labels: List[int]) -> float:
+        """
+        Compute average silhouette score for clustering.
+        silhouette(i) = (b(i) - a(i)) / max(a(i), b(i))
+        where a(i) = avg intra-cluster distance, b(i) = nearest other cluster distance
+        """
+        n = len(vectors)
+        if n < 2:
+            return 0.0
+
+        unique_labels = set(labels)
+        if len(unique_labels) < 2:
+            return 0.0
+
+        # Precompute distances
+        dists = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = self._euclidean(vectors[i], vectors[j])
+                dists[i][j] = d
+                dists[j][i] = d
+
+        total = 0.0
+        for i in range(n):
+            label_i = labels[i]
+
+            # a(i): avg distance to others in same cluster
+            same_cluster = [j for j in range(n) if j != i and labels[j] == label_i]
+            if same_cluster:
+                a_i = statistics.mean(dists[i][j] for j in same_cluster)
+            else:
+                a_i = 0.0
+
+            # b(i): min avg distance to each other cluster
+            b_i = float('inf')
+            for lab in unique_labels:
+                if lab == label_i:
+                    continue
+                other_cluster = [j for j in range(n) if labels[j] == lab]
+                if other_cluster:
+                    avg_d = statistics.mean(dists[i][j] for j in other_cluster)
+                    if avg_d < b_i:
+                        b_i = avg_d
+
+            if b_i == float('inf'):
+                b_i = 0.0
+
+            if max(a_i, b_i) > 0:
+                total += (b_i - a_i) / max(a_i, b_i)
+
+        return total / n
+
+    def _label_cluster(self, centroid: "GameFingerprint", win_rate: float) -> str:
+        """
+        Generate a human-readable behavioral label for a cluster
+        based on its centroid fingerprint and win rate.
+        """
+        parts = []
+
+        # Aggression label
+        if centroid.aggression >= 0.65:
+            parts.append("High Aggression")
+        elif centroid.aggression <= 0.35:
+            parts.append("Low Aggression")
+        else:
+            parts.append("Moderate Aggression")
+
+        # Efficiency label
+        if centroid.efficiency >= 0.65:
+            parts.append("High Efficiency")
+        elif centroid.efficiency <= 0.35:
+            parts.append("Low Efficiency")
+        else:
+            parts.append("Balanced Economy")
+
+        # Objective race
+        if centroid.objective_race >= 0.60:
+            parts.append("Pusher")
+        elif centroid.objective_race <= 0.35:
+            parts.append("Farmer")
+        else:
+            parts.append("Mixed Pressure")
+
+        # Collapse
+        if centroid.collapse >= 0.60:
+            parts.append("Snowball")
+        elif centroid.collapse <= 0.35:
+            parts.append("Scaling")
+        else:
+            parts.append("Stable")
+
+        # Vision
+        if centroid.vision >= 0.60:
+            parts.append("Vision Heavy")
+        elif centroid.vision <= 0.35:
+            parts.append("Vision Light")
+        else:
+            parts.append("Normal Vision")
+
+        base = " / ".join(parts)
+
+        if win_rate >= 0.60:
+            return f"{base} — WINNING TYPE"
+        elif win_rate <= 0.35:
+            return f"{base} — LOSING TYPE"
+        else:
+            return f"{base} — NEUTRAL TYPE"
+
     def _compute_confidence(self, games: List[Dict]) -> float:
         if not games:
             return 0.0
@@ -392,6 +653,33 @@ class SimilarityOutput:
     confidence: float
 
 
+@dataclass
+class ClusterResult:
+    """Result of clustering all games by fingerprint similarity."""
+    cluster_id: int
+    games: List["GameFingerprint"]
+    win_rate: float
+    total_games: int
+    wins: int
+    losses: int
+    dominant_champion: str
+    dominant_champion_pct: float
+    mean_fingerprint: "GameFingerprint"
+    behavioral_label: str
+
+
+@dataclass
+class ClusteringOutput:
+    """Full output of cluster analysis."""
+    player_id: str
+    timestamp: datetime
+    total_games: int
+    clusters: List[ClusterResult]
+    k_best: int
+    silhouette_score: float
+    fingerprints: List[GameFingerprint]
+
+
 # ────────────────────────────────────────────────────────────────
 # Convenience runner
 # ────────────────────────────────────────────────────────────────
@@ -418,43 +706,49 @@ def run_similarity_engine(
 # ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    output = run_similarity_engine()
-    if not output:
+    # Load cache
+    try:
+        with open(r"C:\Facecheck\facecheck_cache.json", 'r', encoding='utf-8') as f:
+            cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
         print("No data available.")
         exit()
+
+    games = cache.get("games", [])
+    if not games:
+        print("No games in cache.")
+        exit()
+
+    # Run fingerprint analysis
+    engine = SimilarityEngine()
+    output = engine.analyze(games)
 
     print(f"Similarity Engine — {output.total_games} games fingerprinted")
     print()
 
-    # Show distribution summary
     print("Fingerprint distributions (percentile rank ranges):")
-    print(f"  aggression: {min(f.aggression for f in output.fingerprints):.2f} – {max(f.aggression for f in output.fingerprints):.2f}")
-    print(f"  efficiency: {min(f.efficiency for f in output.fingerprints):.2f} – {max(f.efficiency for f in output.fingerprints):.2f}")
+    print(f"  aggression:      {min(f.aggression for f in output.fingerprints):.2f} – {max(f.aggression for f in output.fingerprints):.2f}")
+    print(f"  efficiency:      {min(f.efficiency for f in output.fingerprints):.2f} – {max(f.efficiency for f in output.fingerprints):.2f}")
     print(f"  objective_race: {min(f.objective_race for f in output.fingerprints):.2f} – {max(f.objective_race for f in output.fingerprints):.2f}")
-    print(f"  collapse: {min(f.collapse for f in output.fingerprints):.2f} – {max(f.collapse for f in output.fingerprints):.2f}")
-    print(f"  vision: {min(f.vision for f in output.fingerprints):.2f} – {max(f.vision for f in output.fingerprints):.2f}")
+    print(f"  collapse:        {min(f.collapse for f in output.fingerprints):.2f} – {max(f.collapse for f in output.fingerprints):.2f}")
+    print(f"  vision:          {min(f.vision for f in output.fingerprints):.2f} – {max(f.vision for f in output.fingerprints):.2f}")
     print()
 
-    # Show a sample fingerprint
-    sample = output.fingerprints[0]
-    print(f"Sample fingerprint: {sample.match_id} ({sample.champion})")
-    print(f"  aggression={sample.aggression}, efficiency={sample.efficiency}")
-    print(f"  objective_race={sample.objective_race}, collapse={sample.collapse}, vision={sample.vision}")
-    print(f"  result: {'WIN' if sample.win else 'LOSS'}")
+    # Run clustering
+    print("Running cluster analysis...")
+    clustering = engine.cluster(min_k=3, max_k=12)
+    if not clustering:
+        print("Clustering failed.")
+        exit()
+
+    print(f"Best K={clustering.k_best} (silhouette={clustering.silhouette_score:.3f})")
     print()
-
-    # Test nearest neighbors on the first game
-    engine = SimilarityEngine()
-    engine.games = output.fingerprints  # use fingerprints directly
-    # rebuild games from fingerprint match_ids... actually we need the full engine
-    # Let me just re-run a quick test
-    import json
-    with open(r"C:\Facecheck\facecheck_cache.json", 'r', encoding='utf-8') as f:
-        cache = json.load(f)
-    engine2 = SimilarityEngine()
-    output2 = engine2.analyze(cache['games'])
-
-    print("Nearest neighbors test (first game):")
-    neighbors = engine2.nearest_neighbors(output2.fingerprints[0].match_id, k=5)
-    for n in neighbors:
-        print(f"  {n.champion} ({n.match_id}) - distance={n.distance:.3f} - {'WIN' if n.win else 'LOSS'}")
+    print(f"{'='*60}")
+    for c in clustering.clusters:
+        print(f"Cluster {c.cluster_id}: {c.behavioral_label}")
+        print(f"  {c.total_games} games | WR: {c.win_rate:.1%} | {c.wins}W/{c.losses}L")
+        print(f"  Dominant: {c.dominant_champion} ({c.dominant_champion_pct:.0%})")
+        fp = c.mean_fingerprint
+        print(f"  Centroid: agg={fp.aggression:.2f} eff={fp.efficiency:.2f} "
+              f"obj={fp.objective_race:.2f} col={fp.collapse:.2f} vis={fp.vision:.2f}")
+        print()
