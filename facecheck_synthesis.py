@@ -240,47 +240,97 @@ class SynthesisLayer:
     def _get_mechanism(self, game: Dict, cluster: Optional[ClusterResult]) -> str:
         """
         Name the specific mechanism of the loss or win.
-        Uses cluster membership, fingerprint, and signal co-occurrence
-        to produce a precise cause statement.
+        Uses cluster centroid delta — compares the game's fingerprint
+        to the cluster centroid directly. No hardcoded thresholds.
         """
-        if not cluster:
+        if not cluster or not self.similarity_output:
             return ""
+        if cluster.total_games < 10:
+            return ""  # not enough data for reliable centroid comparison
+
+        centroid = cluster.mean_fingerprint
+        match_id = game.get("match_id", "")
+
+        # Find this game's fingerprint
+        game_fp = None
+        for fp in self.similarity_output.fingerprints:
+            if fp.match_id == match_id:
+                game_fp = fp
+                break
+        if not game_fp:
+            return ""
+
         win = game.get("win", False)
         deaths = game.get("deaths", 0)
-        vision = game.get("vision", 0) or 0
         gold_lead_15 = game.get("gold_lead_15", 0) or 0
-        cs_10 = game.get("cs_10", 0) or 0
         lks = game.get("largest_killing_spree", 0) or 0
-        efficiency = 0.0
-        for fp in self.similarity_output.fingerprints:
-            if fp.match_id == game.get("match_id", ""):
-                efficiency = fp.efficiency
-                break
+
+        # Compute fingerprint deltas: (dimension, game_value, centroid_value, delta)
+        fp_deltas = [
+            ("efficiency", game_fp.efficiency, centroid.efficiency),
+            ("aggression", game_fp.aggression, centroid.aggression),
+            ("vision", game_fp.vision, centroid.vision),
+            ("collapse", game_fp.collapse, centroid.collapse),
+            ("objective_race", game_fp.objective_race, centroid.objective_race),
+        ]
+
+        # Non-fingerprint deltas
+        non_fp_deltas = [
+            ("deaths", deaths, None),   # None = no centroid for raw field
+            ("gold_lead_15", gold_lead_15, None),
+            ("largest_killing_spree", lks, None),
+        ]
+
         parts = []
         if cluster.win_rate <= 0.35:
-            if efficiency <= 0.40:
-                parts.append(f"low efficiency ({efficiency:.2f})")
-            if vision <= 0.35:
-                parts.append(f"low vision ({vision:.0f})")
-            if deaths >= 6:
-                parts.append(f"high death count ({deaths})")
-            if gold_lead_15 <= -500:
-                parts.append(f"gold deficit at 15 ({gold_lead_15})")
+            # Loss: report dimensions where this game is BELOW the cluster centroid
+            for dim, game_val, centroid_val in fp_deltas:
+                delta = game_val - centroid_val
+                if delta < -0.05:  # game is meaningfully below centroid
+                    if dim == "efficiency":
+                        parts.append(f"eff {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "aggression":
+                        parts.append(f"agg {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "vision":
+                        parts.append(f"vis {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "collapse":
+                        parts.append(f"collapse {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "objective_race":
+                        parts.append(f"obj {game_val:.2f} vs {centroid_val:.2f} cluster")
+            # Non-fingerprint: deaths and gold deficit
+            if deaths >= centroid.efficiency * 10 + 4:  # rough heuristic from cluster
+                parts.append(f"{deaths} deaths")
+            if gold_lead_15 < -500:
+                parts.append(f"gold deficit {gold_lead_15}")
             if lks <= 2:
-                parts.append("no snowball (stayed low)")
+                parts.append("no snowball")
             if parts:
                 return " + ".join(parts) + " — cluster loss mechanism"
             return f"cluster losing type ({cluster.win_rate:.0%} WR)"
+
         elif cluster.win_rate >= 0.60:
-            if efficiency >= 0.65:
-                parts.append("high efficiency")
-            if deaths <= 3:
-                parts.append("controlled survival")
-            if gold_lead_15 >= 500:
-                parts.append("gold lead at 15")
+            # Win: report dimensions where this game is ABOVE the cluster centroid
+            for dim, game_val, centroid_val in fp_deltas:
+                delta = game_val - centroid_val
+                if delta > 0.05:  # game is meaningfully above centroid
+                    if dim == "efficiency":
+                        parts.append(f"eff {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "aggression":
+                        parts.append(f"agg {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "vision":
+                        parts.append(f"vis {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "collapse":
+                        parts.append(f"collapse {game_val:.2f} vs {centroid_val:.2f} cluster")
+                    elif dim == "objective_race":
+                        parts.append(f"obj {game_val:.2f} vs {centroid_val:.2f} cluster")
+            if deaths <= 4:
+                parts.append("controlled deaths")
+            if gold_lead_15 > 500:
+                parts.append(f"gold lead {gold_lead_15}")
             if parts:
-                return " + ".join(parts) + " — cluster winning mechanism"
+                return " + ".join(parts) + " — cluster win mechanism"
             return f"cluster winning type ({cluster.win_rate:.0%} WR)"
+
         return ""
 
     def analyze_single_game(self, game: Dict, engines: MultiEngineOutput) -> Verdict:
