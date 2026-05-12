@@ -96,6 +96,7 @@ class SimilarityEngine:
         self.games: List[Dict] = []
         self.fingerprints: List[GameFingerprint] = []
         self._distributions: Dict[str, List[float]] = {}
+        self._last_output: Optional["SimilarityOutput"] = None
 
     def analyze(self, games: List[Dict]) -> "SimilarityOutput":
         """
@@ -114,14 +115,17 @@ class SimilarityEngine:
             fp = self._extract_fingerprint(game)
             self.fingerprints.append(fp)
 
-        return SimilarityOutput(
+        result = SimilarityOutput(
             player_id=self.player_id,
             timestamp=datetime.now(),
             total_games=len(games),
             fingerprints=self.fingerprints,
+            games=games,
             distributions=self._distributions,
             confidence=self._compute_confidence(games)
         )
+        self._last_output = result
+        return result
 
     def _compute_distributions(self, games: List[Dict]):
         """Pre-compute all distributions for normalization."""
@@ -569,7 +573,7 @@ class SimilarityEngine:
         for i, c in enumerate(clusters):
             c.cluster_id = i
 
-        return ClusteringOutput(
+        output = ClusteringOutput(
             player_id=player_id,
             timestamp=datetime.now(),
             total_games=n_games,
@@ -578,6 +582,12 @@ class SimilarityEngine:
             silhouette_score=round(best_score, 4),
             fingerprints=self.fingerprints
         )
+
+        # Attach clusters to SimilarityOutput for reasoning layer access
+        if self._last_output:
+            self._last_output.clusters = clusters
+
+        return output
 
     def _kmeans_predict(self, vectors: List[List[float]], k: int, n_iter: int) -> List[int]:
         """Pure-python K-Means clustering. Returns cluster labels."""
@@ -902,8 +912,10 @@ class SimilarityOutput:
     timestamp: datetime
     total_games: int
     fingerprints: List[GameFingerprint]
+    games: List[Dict]                    # Raw game dicts for matched comparison
     distributions: Dict[str, List[float]]
     confidence: float
+    clusters: List["ClusterResult"] = field(default_factory=list)  # Set by cluster() call
 
 
 @dataclass

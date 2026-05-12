@@ -34,6 +34,7 @@ try:
     from facecheck_engine_draft import run_draft_engine
     from facecheck_player_model import get_or_create_player_model
     from facecheck_synthesis import SynthesisLayer, MultiEngineOutput
+    from facecheck_similarity import SimilarityEngine, SimilarityOutput
     SYNTHESIS_AVAILABLE = True
 except Exception:
     SYNTHESIS_AVAILABLE = False
@@ -599,6 +600,15 @@ def print_synthesis_block(verdict):
     if verdict.drill_down_available:
         print(f"\n  Drill-down: {verdict.drill_down_prompt}")
 
+    if verdict.cluster_label:
+        print(f"\n  Pattern: {verdict.cluster_label}")
+    if verdict.mechanism:
+        print(f"\n  Mechanism: {verdict.mechanism}")
+    if verdict.counterfactual_insight:
+        print(f"  {verdict.counterfactual_insight}")
+    if verdict.similar_games:
+        print(f"\n  Structurally similar games: {', '.join(verdict.similar_games[:3])}")
+
     if verdict.matched_patterns:
         print(f"\n  Matched Patterns ({len(verdict.matched_patterns)}):")
         for pid in verdict.matched_patterns[:3]:
@@ -726,13 +736,31 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
             if death_output:
                 # Load player model
                 player_model = get_or_create_player_model(player_id, historical_games)
-                # Generate synthesis verdict with multi-engine
-                synthesis = SynthesisLayer(player_model)
+
+                # Run SimilarityEngine once for full history
+                similarity_output = None
+                cluster_membership = {}
+                try:
+                    sim_engine = SimilarityEngine()
+                    sim_result = sim_engine.analyze(historical_games)
+                    if sim_result and sim_result.fingerprints:
+                        similarity_output = sim_result
+                        cluster_result = sim_engine.cluster()
+                        if cluster_result and cluster_result.clusters:
+                            for cluster in cluster_result.clusters:
+                                for fp in cluster.games:
+                                    cluster_membership[fp.match_id] = cluster.cluster_id
+                except Exception as e:
+                    pass  # SimilarityEngine is best-effort; don't block verdict
+
                 engines = MultiEngineOutput(
                     death=death_output, economy=economy_output, combat=combat_output,
                     durability=durability_output, vision=vision_output,
                     objective=objective_output, draft=draft_output,
                 )
+                synthesis = SynthesisLayer(player_model,
+                                          similarity_output=similarity_output,
+                                          cluster_membership=cluster_membership)
                 verdict = synthesis.analyze_single_game(game, engines)
 
                 if verdict:

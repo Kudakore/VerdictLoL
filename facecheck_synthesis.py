@@ -12,6 +12,10 @@ import statistics
 
 from facecheck_engine_base import EngineOutput, EngineSignature
 from facecheck_player_model import PlayerModel, PatternMemory, PlayerBaseline
+from facecheck_similarity import (
+    SimilarityEngine, SimilarityOutput, SimilarityResult,
+    GameFingerprint, ClusterResult, DiscoveredSignal
+)
 
 
 @dataclass
@@ -64,6 +68,12 @@ class Verdict:
     matched_patterns: List[str] = field(default_factory=list)  # Pattern IDs that matched
     divergences: List[str] = field(default_factory=list)  # Where this game diverged from pattern
 
+    # Reasoning layer (Phase 1)
+    similar_games: List[str] = field(default_factory=list)  # match_ids of structurally similar games
+    cluster_label: str = ""                                   # Behavioral cluster label for this game
+    counterfactual_insight: str = ""                         # Counterfactual delta from SimilarityEngine
+    mechanism: str = ""                                     # Named mechanism of the loss/win
+
     # Drill-down (optional)
     drill_down_available: bool = False
     drill_down_prompt: str = ""
@@ -74,10 +84,204 @@ class SynthesisLayer:
     Synthesizes engine outputs and player model into verdicts.
 
     Core responsibility: Find meaning in the data.
+    Phase 1 upgrade: reasoning queries against SimilarityEngine output.
     """
 
-    def __init__(self, player_model: PlayerModel):
+    def __init__(self, player_model: PlayerModel,
+                 similarity_output: Optional[SimilarityOutput] = None,
+                 cluster_membership: Optional[Dict[str, int]] = None):
         self.player_model = player_model
+        self.similarity_output = similarity_output
+        self.cluster_membership = cluster_membership or {}
+
+    # ── Reasoning Query API ──────────────────────────────────────
+
+    def _get_game_cluster(self, match_id: str) -> Optional[ClusterResult]:
+        """Look up which behavioral cluster this game belongs to."""
+        if not self.similarity_output or match_id not in self.cluster_membership:
+            return None
+        cluster_id = self.cluster_membership[match_id]
+        for cluster in getattr(self.similarity_output, 'clusters', []):
+            if cluster.cluster_id == cluster_id:
+                return cluster
+        return None
+
+    def _get_similar_games(self, fp: GameFingerprint, k: int = 5,
+                           prefer_loss: bool = True) -> List[SimilarityResult]:
+        """
+        Find K most similar games by fingerprint.
+        If prefer_loss=True, bias toward games with the same result.
+        """
+        if not self.similarity_output:
+            return []
+        all_fps = self.similarity_output.fingerprints
+        target_idx = None
+        for i, f in enumerate(all_fps):
+            if f.match_id == fp.match_id:
+                target_idx = i
+                break
+        if target_idx is None:
+            return []
+        # Build distance-sorted list
+        scored = []
+        for i, f in enumerate(all_fps):
+            if i == target_idx:
+                continue
+            dist = self._fp_distance(fp, f)
+            scored.append((dist, f))
+        scored.sort(key=lambda x: x[0])
+        results = []
+        for dist, f in scored[:k * 2]:
+            results.append(SimilarityResult(
+                match_id=f.match_id,
+                champion=f.champion,
+                win=f.win,
+                distance=round(dist, 4),
+                fingerprint=f
+            ))
+        # Filter by prefer_loss if we have enough results
+        if prefer_loss:
+            filtered = [r for r in results if r.win == fp.win]
+            if len(filtered) >= k:
+                return filtered[:k]
+        return results[:k]
+
+    def _fp_distance(self, a: GameFingerprint, b: GameFingerprint) -> float:
+        """Euclidean distance in 5-D fingerprint space."""
+        import math
+        return math.sqrt(
+            (a.aggression - b.aggression) ** 2 +
+            (a.efficiency - b.efficiency) ** 2 +
+            (a.objective_race - b.objective_race) ** 2 +
+            (a.collapse - b.collapse) ** 2 +
+            (a.vision - b.vision) ** 2
+        )
+
+    def _get_counterfactual_insight(self, game: Dict) -> str:
+        """
+        Build a counterfactual insight string from signal deltas.
+        Uses the same signals as discover_signals() to tell the story
+        of what happened vs what could have been.
+        """
+        if not self.similarity_output:
+            return ""
+        engine = SimilarityEngine()
+        engine.games = self.similarity_output.fingerprints
+        # Build minimal engine state for matched comparison
+        signals = []
+        signal_defs = [
+            ("8+ deaths", lambda g: (g.get("deaths") or 0) >= 8),
+            ("5+ deaths", lambda g: (g.get("deaths") or 0) >= 5),
+            ("low vision", lambda g: (g.get("vision") or 0) < 30),
+            ("gold deficit early", lambda g: (g.get("gold_lead_15") or 0) <= -500),
+        ]
+        best_insight = ""
+        best_abs_delta = 0.0
+        for name, fn in signal_defs:
+            if not fn(game):
+                continue
+            # Run matched comparison for this signal
+            result = self._run_matched_comparison(fn)
+            if result and abs(result.delta) > best_abs_delta and abs(result.delta) > 0.08:
+                best_abs_delta = abs(result.delta)
+                direction = "increased" if result.delta < 0 else "decreased"
+                best_insight = (
+                    f"Games without {name} won {abs(result.delta):.0%} more often "
+                    f"({result.win_rate_matched_comparison:.0%} vs {result.win_rate_with_signal:.0%})."
+                )
+        return best_insight
+
+    def _run_matched_comparison(self, signal_fn) -> Optional[object]:
+        """
+        Run matched comparison using the fingerprint corpus.
+        Returns a minimal result object with delta, win_rate_with_signal, win_rate_matched.
+        """
+        if not self.similarity_output:
+            return None
+        games = self.similarity_output.games
+        if not games:
+            return None
+        fps = self.similarity_output.fingerprints
+        games_with = []
+        games_without = []
+        for i, g in enumerate(games):
+            if signal_fn(g):
+                games_with.append(i)
+            else:
+                games_without.append(i)
+        if len(games_with) < 5 or len(games_without) < 5:
+            return None
+        # Build matched set
+        matched_with = set()
+        for idx in games_with:
+            target_fp = fps[idx]
+            scored = []
+            for j in games_without:
+                if j == idx:
+                    continue
+                scored.append((self._fp_distance(target_fp, fps[j]), j))
+            scored.sort(key=lambda x: x[0])
+            for _, j in scored[:30]:
+                matched_with.add(j)
+        if not matched_with:
+            return None
+        wins_with = sum(1 for i in games_with if games[i].get("win", False))
+        wins_matched = sum(1 for i in matched_with if games[i].get("win", False))
+        wr_with = wins_with / len(games_with)
+        wr_matched = wins_matched / len(matched_with)
+        delta = wr_with - wr_matched
+        class _Result:
+            def __init__(self, delta, wr_with, wr_matched):
+                self.delta = delta
+                self.win_rate_with_signal = wr_with
+                self.win_rate_matched_comparison = wr_matched
+        return _Result(delta, wr_with, wr_matched)
+
+    def _get_mechanism(self, game: Dict, cluster: Optional[ClusterResult]) -> str:
+        """
+        Name the specific mechanism of the loss or win.
+        Uses cluster membership, fingerprint, and signal co-occurrence
+        to produce a precise cause statement.
+        """
+        if not cluster:
+            return ""
+        win = game.get("win", False)
+        deaths = game.get("deaths", 0)
+        vision = game.get("vision", 0) or 0
+        gold_lead_15 = game.get("gold_lead_15", 0) or 0
+        cs_10 = game.get("cs_10", 0) or 0
+        lks = game.get("largest_killing_spree", 0) or 0
+        efficiency = 0.0
+        for fp in self.similarity_output.fingerprints:
+            if fp.match_id == game.get("match_id", ""):
+                efficiency = fp.efficiency
+                break
+        parts = []
+        if cluster.win_rate <= 0.35:
+            if efficiency <= 0.40:
+                parts.append(f"low efficiency ({efficiency:.2f})")
+            if vision <= 0.35:
+                parts.append(f"low vision ({vision:.0f})")
+            if deaths >= 6:
+                parts.append(f"high death count ({deaths})")
+            if gold_lead_15 <= -500:
+                parts.append(f"gold deficit at 15 ({gold_lead_15})")
+            if lks <= 2:
+                parts.append("no snowball (stayed low)")
+            if parts:
+                return " + ".join(parts) + " — cluster loss mechanism"
+            return f"cluster losing type ({cluster.win_rate:.0%} WR)"
+        elif cluster.win_rate >= 0.60:
+            if efficiency >= 0.65:
+                parts.append("high efficiency")
+            if deaths <= 3:
+                parts.append("controlled survival")
+            if gold_lead_15 >= 500:
+                parts.append("gold lead at 15")
+            if parts:
+                return " + ".join(parts) + " — cluster winning mechanism"
+            return f"cluster winning type ({cluster.win_rate:.0%} WR)"
+        return ""
 
     def analyze_single_game(self, game: Dict, engines: MultiEngineOutput) -> Verdict:
         """
@@ -96,6 +300,21 @@ class SynthesisLayer:
 
         # Assess game against personal baselines
         baseline_assessments = self.player_model.assess_game(game)
+
+        # ── Phase 1: Reasoning Layer ────────────────────────────
+        # Look up cluster membership, similar games, mechanism
+        match_id = game.get("match_id", "")
+        cluster = self._get_game_cluster(match_id)
+        cluster_label = cluster.behavioral_label if cluster else ""
+        mechanism = self._get_mechanism(game, cluster)
+        counterfactual_insight = self._get_counterfactual_insight(game)
+        similar_games = []
+        if self.similarity_output:
+            for fp in self.similarity_output.fingerprints:
+                if fp.match_id == match_id:
+                    similar = self._get_similar_games(fp, k=3, prefer_loss=True)
+                    similar_games = [r.match_id for r in similar]
+                    break
 
         # Build the verdict statement with multi-engine correlation
         statement, confidence = self._build_fractal_statement(game, all_signatures, baseline_assessments, engines)
@@ -124,6 +343,10 @@ class SynthesisLayer:
             lessons=lessons,
             matched_patterns=matched_patterns,
             divergences=divergences,
+            similar_games=similar_games,
+            cluster_label=cluster_label,
+            counterfactual_insight=counterfactual_insight,
+            mechanism=mechanism,
             drill_down_available=True,
             drill_down_prompt="Run 'face game <id> --deep' for full node analysis"
         )
