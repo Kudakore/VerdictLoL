@@ -122,7 +122,9 @@ class SimilarityEngine:
             fingerprints=self.fingerprints,
             games=games,
             distributions=self._distributions,
-            confidence=self._compute_confidence(games)
+            confidence=self._compute_confidence(games),
+            clusters=[],
+            patterns=[]
         )
         self._last_output = result
         return result
@@ -431,6 +433,146 @@ class SimilarityEngine:
 
         results.sort(key=sort_key)
         return results[:max_results]
+
+    def discover_patterns(
+        self,
+        min_cooccurrence: int = 8,
+        superadditivity_threshold: float = 0.05
+    ) -> List["PatternResult"]:
+        """
+        Mine co-occurring signal pairs from losing games.
+        Tests whether signal CONJUNCTIONS predict loss better than
+        either signal alone (superadditivity).
+
+        Args:
+            min_cooccurrence: minimum losing games where both signals fire
+                              to qualify for testing
+            superadditivity_threshold: pair_delta must exceed strongest
+                                       individual delta by this much to
+                                       qualify as superadditive
+
+        Returns:
+            List of PatternResult sorted by co-occurrence frequency
+        """
+        if not self.fingerprints or not self.games:
+            raise ValueError("Must call analyze() before discover_patterns()")
+
+        # Get validated signal queries
+        queries = _build_signal_queries()
+        signal_map = {q.name: q for q in queries}
+
+        # Build (sig1_name, sig2_name) -> set of match_ids where both fired
+        # only from losing games
+        losing_games = [g for g in self.games if not g.get("win", False)]
+        if len(losing_games) < 20:
+            return []  # not enough losing data
+
+        losing_match_ids = {g.get("match_id") for g in losing_games}
+
+        # Count co-occurrences: for each pair, how many losing games had both?
+        pair_counts: Dict[Tuple[str, str], int] = {}
+        for g in losing_games:
+            mid = g.get("match_id")
+            active_signals = set()
+            for q in queries:
+                if q.signal_fn(g):
+                    active_signals.add(q.name)
+            # Tally all pairs
+            active_list = sorted(active_signals)
+            for i, s1 in enumerate(active_list):
+                for s2 in active_list[i + 1:]:
+                    key = (s1, s2) if s1 < s2 else (s2, s1)
+                    pair_counts[key] = pair_counts.get(key, 0) + 1
+
+        if not pair_counts:
+            return []
+
+        # Build index: match_id -> set of signal names fired
+        game_signals: Dict[str, Set[str]] = {}
+        for g in self.games:
+            mid = g.get("match_id")
+            active = set()
+            for q in queries:
+                if q.signal_fn(g):
+                    active.add(q.name)
+            game_signals[mid] = active
+
+        # Pre-compute individual signal deltas from discover_signals
+        individual_deltas: Dict[str, float] = {}
+        individual_win_rates: Dict[str, float] = {}
+        for q in queries:
+            mc_result = self.matched_comparison(q.signal_fn, k=30, min_games=q.min_games)
+            if mc_result:
+                individual_deltas[q.name] = mc_result.delta
+                individual_win_rates[q.name] = mc_result.win_rate_with_signal
+            else:
+                individual_deltas[q.name] = 0.0
+                individual_win_rates[q.name] = 0.0
+
+        results = []
+        for (s1, s2), count in pair_counts.items():
+            if count < min_cooccurrence:
+                continue
+
+            rate = count / len(losing_games)
+
+            # Build conjunction signal function
+            q1 = signal_map.get(s1)
+            q2 = signal_map.get(s2)
+            if not q1 or not q2:
+                continue
+
+            conj_sig = lambda g, q1=q1, q2=q2: q1.signal_fn(g) and q2.signal_fn(g)
+
+            mc_result = self.matched_comparison(conj_sig, k=30, min_games=count)
+            if mc_result is None:
+                continue
+
+            d1 = individual_deltas.get(s1, 0.0)
+            d2 = individual_deltas.get(s2, 0.0)
+            strongest = max(abs(d1), abs(d2), 0.001)
+            superadditive = abs(mc_result.delta) > strongest + superadditivity_threshold
+
+            results.append(PatternResult(
+                signal_1=s1,
+                signal_2=s2,
+                co_occurrence_count=count,
+                co_occurrence_rate=rate,
+                pair_win_rate=mc_result.win_rate_with_signal,
+                pair_matched_win_rate=mc_result.win_rate_matched_comparison,
+                pair_delta=mc_result.delta,
+                pair_confidence=mc_result.confidence,
+                delta_1=d1,
+                delta_2=d2,
+                strongest_individual_delta=strongest,
+                superadditive=superadditive,
+                interpretation=self._interpret_pattern(s1, s2, mc_result, superadditive)
+            ))
+
+        # Sort by co-occurrence frequency (most common losing patterns first)
+        results.sort(key=lambda p: p.co_occurrence_count, reverse=True)
+
+        # Attach patterns to SimilarityOutput for reasoning layer access
+        if self._last_output:
+            self._last_output.patterns = results
+
+        return results
+
+    def _interpret_pattern(self, s1: str, s2: str,
+                           result: "MatchedComparisonResult",
+                           superadditive: bool) -> str:
+        """Generate human-readable interpretation of a pattern result."""
+        delta_pct = abs(result.delta) * 100
+        direction = "drops" if result.delta < 0 else "improves"
+
+        if superadditive:
+            return (f"{s1} + {s2} together cost {delta_pct:.1f}% WR "
+                    f"({result.win_rate_with_signal:.0%} vs {result.win_rate_matched_comparison:.0%}) — "
+                    f"superadditive: worse than either signal alone.")
+        else:
+            return (f"{s1} + {s2} together {direction} {delta_pct:.1f}% WR "
+                    f"({result.win_rate_with_signal:.0%} vs {result.win_rate_matched_comparison:.0%}). "
+                    f"Not superadditive — each signal contributes independently.")
 
     def _interpret_signal(self, name: str, category: str, result: "MatchedComparisonResult") -> str:
         """Generate a human-readable interpretation of a signal result."""
@@ -776,6 +918,30 @@ class DiscoveredSignal:
             return "LOW CONFIDENCE"
 
 
+@dataclass
+class PatternResult:
+    """
+    Result of co-occurrence pattern mining.
+    A pattern is a pair of signals that co-occur in losing games
+    and tested via matched comparison for superadditivity.
+    """
+    signal_1: str
+    signal_2: str
+    co_occurrence_count: int       # number of losing games where BOTH fired
+    co_occurrence_rate: float      # co_occurrence_count / total_losing_games
+    # Matched comparison for the conjunction
+    pair_win_rate: float           # WR on games where BOTH signals fired
+    pair_matched_win_rate: float   # WR on matched games where NEITHER fired
+    pair_delta: float              # pair_win_rate - pair_matched_win_rate
+    pair_confidence: float
+    # Individual signal deltas for superadditivity check
+    delta_1: float                 # individual delta for signal_1
+    delta_2: float                 # individual delta for signal_2
+    strongest_individual_delta: float  # max(|delta_1|, |delta_2|)
+    superadditive: bool            # True if |pair_delta| > strongest_individual_delta + 0.05
+    interpretation: str = ""
+
+
 def _build_signal_queries() -> List[SignalQuery]:
     """Standard suite of signal queries based on Win Impact patterns."""
     queries = []
@@ -915,7 +1081,8 @@ class SimilarityOutput:
     games: List[Dict]                    # Raw game dicts for matched comparison
     distributions: Dict[str, List[float]]
     confidence: float
-    clusters: List["ClusterResult"] = field(default_factory=list)  # Set by cluster() call
+    clusters: List["ClusterResult"] = field(default_factory=list)
+    patterns: List["PatternResult"] = field(default_factory=list)  # Set by discover_pattern_patterns()
 
 
 @dataclass

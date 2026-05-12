@@ -608,6 +608,8 @@ def print_synthesis_block(verdict):
         print(f"  {verdict.counterfactual_insight}")
     if verdict.similar_games:
         print(f"\n  Structurally similar games: {', '.join(verdict.similar_games[:3])}")
+    if verdict.pattern_insight:
+        print(f"  {verdict.pattern_insight}")
 
     if verdict.matched_patterns:
         print(f"\n  Matched Patterns ({len(verdict.matched_patterns)}):")
@@ -750,6 +752,11 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
                             for cluster in cluster_result.clusters:
                                 for fp in cluster.games:
                                     cluster_membership[fp.match_id] = cluster.cluster_id
+                        # Phase 2: discover co-occurring patterns
+                        try:
+                            sim_engine.discover_patterns()
+                        except Exception:
+                            pass  # best-effort
                 except Exception as e:
                     pass  # SimilarityEngine is best-effort; don't block verdict
 

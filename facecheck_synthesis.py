@@ -14,7 +14,7 @@ from facecheck_engine_base import EngineOutput, EngineSignature
 from facecheck_player_model import PlayerModel, PatternMemory, PlayerBaseline
 from facecheck_similarity import (
     SimilarityEngine, SimilarityOutput, SimilarityResult,
-    GameFingerprint, ClusterResult, DiscoveredSignal
+    GameFingerprint, ClusterResult, DiscoveredSignal, PatternResult
 )
 
 
@@ -72,7 +72,8 @@ class Verdict:
     similar_games: List[str] = field(default_factory=list)  # match_ids of structurally similar games
     cluster_label: str = ""                                   # Behavioral cluster label for this game
     counterfactual_insight: str = ""                         # Counterfactual delta from SimilarityEngine
-    mechanism: str = ""                                     # Named mechanism of the loss/win
+    mechanism: str = ""                                      # Named mechanism of the loss/win
+    pattern_insight: str = ""                               # Co-occurring pattern info (Phase 2)
 
     # Drill-down (optional)
     drill_down_available: bool = False
@@ -333,6 +334,73 @@ class SynthesisLayer:
 
         return ""
 
+    def _get_pattern_insight(self, game: Dict) -> str:
+        """
+        Check which co-occurring patterns fired in this game.
+        Uses the patterns discovered by discover_patterns() stored in
+        similarity_output.patterns. Returns a string describing which
+        (if any) superadditive patterns fired.
+        """
+        if not self.similarity_output or not self.similarity_output.patterns:
+            return ""
+        patterns = self.similarity_output.patterns
+        if not patterns:
+            return ""
+
+        match_id = game.get("match_id", "")
+        if not match_id:
+            return ""
+
+        # Get the signal queries to evaluate which signals fired in this game
+        from facecheck_similarity import _build_signal_queries
+        queries = _build_signal_queries()
+        signal_map = {q.name: q for q in queries}
+
+        # Determine which signals fired in this game
+        signals_fired = set()
+        for q in queries:
+            try:
+                if q.signal_fn(game):
+                    signals_fired.add(q.name)
+            except Exception:
+                pass
+
+        if not signals_fired:
+            return ""
+
+        # Check top patterns (by co-occurrence count) for matches
+        # Superadditive patterns get priority
+        superadditive_fired = []
+        non_super_fired = []
+
+        for p in patterns:
+            if p.signal_1 in signals_fired and p.signal_2 in signals_fired:
+                if p.superadditive:
+                    superadditive_fired.append(p)
+                elif p.pair_delta < -0.08:  # reliably harmful conjunction
+                    non_super_fired.append(p)
+
+        if not superadditive_fired and not non_super_fired:
+            return ""
+
+        parts = []
+        if superadditive_fired:
+            for p in superadditive_fired[:1]:  # show top superadditive only
+                delta_pct = abs(p.pair_delta) * 100
+                parts.append(
+                    f"superadditive: {p.signal_1} + {p.signal_2} "
+                    f"cost {delta_pct:.0f}% WR (conf={p.pair_confidence:.0%})"
+                )
+        if non_super_fired:
+            for p in non_super_fired[:1]:
+                delta_pct = abs(p.pair_delta) * 100
+                parts.append(
+                    f"conjunction: {p.signal_1} + {p.signal_2} "
+                    f"({p.co_occurrence_count} losing games, delta={delta_pct:.0f}%)"
+                )
+
+        return " | ".join(parts) if parts else ""
+
     def analyze_single_game(self, game: Dict, engines: MultiEngineOutput) -> Verdict:
         """
         Fractal analysis: analyze one game through the lens of ALL games.
@@ -358,6 +426,7 @@ class SynthesisLayer:
         cluster_label = cluster.behavioral_label if cluster else ""
         mechanism = self._get_mechanism(game, cluster)
         counterfactual_insight = self._get_counterfactual_insight(game)
+        pattern_insight = self._get_pattern_insight(game)
         similar_games = []
         if self.similarity_output:
             for fp in self.similarity_output.fingerprints:
@@ -397,6 +466,7 @@ class SynthesisLayer:
             cluster_label=cluster_label,
             counterfactual_insight=counterfactual_insight,
             mechanism=mechanism,
+            pattern_insight=pattern_insight,
             drill_down_available=True,
             drill_down_prompt="Run 'face game <id> --deep' for full node analysis"
         )
