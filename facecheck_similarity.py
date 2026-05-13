@@ -1116,19 +1116,19 @@ class ClusteringOutput:
 # Convenience runner
 # ────────────────────────────────────────────────────────────────
 
-def run_similarity_engine(
-    cache_path: str = r"C:\Facecheck\facecheck_cache.json"
-) -> Optional[SimilarityOutput]:
+def run_similarity_engine(games=None, cache_path=None) -> Optional[SimilarityOutput]:
+    if games is not None:
+        engine = SimilarityEngine()
+        return engine.analyze(games)
+    cache_path = cache_path or r"C:\Facecheck\facecheck_cache.json"
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
-
     games = cache.get("games", [])
     if not games:
         return None
-
     engine = SimilarityEngine()
     return engine.analyze(games)
 

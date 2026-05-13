@@ -82,3 +82,28 @@ class EngineOutput:
     confidence: float
     source_games: List[str]
     raw_metrics: Dict
+
+
+def run_engine_from_cache(engine_class, cache_path: str = "C:\\Facecheck\\facecheck_cache.json",
+                          games=None, player_id=None) -> Optional[EngineOutput]:
+    """
+    Run any engine class, either from explicit data or from cache.
+
+    If games and player_id are provided, uses them directly (no file read).
+    Otherwise, loads from cache_path (backward compatible).
+    """
+    if games is not None and player_id is not None:
+        engine = engine_class(player_id)
+        return engine.analyze(games)
+
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            cache = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    games = cache.get("games", [])
+    player_id = cache.get("puuid", "")
+    if not games:
+        return None
+    engine = engine_class(player_id)
+    return engine.analyze(games)

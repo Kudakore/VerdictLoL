@@ -12,7 +12,7 @@ import statistics
 from typing import List, Dict, Optional
 from datetime import datetime
 
-from facecheck_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput
+from facecheck_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
 
 
 class CombatEngine:
@@ -335,18 +335,12 @@ class CombatEngine:
         }
 
 
-def run_combat_engine(cache_path: str = "C:\\Facecheck\\facecheck_cache.json") -> Optional[EngineOutput]:
-    try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
-            cache = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-    games = cache.get("games", [])
-    player_id = cache.get("puuid", "")
-    if not games:
-        return None
-    engine = CombatEngine(player_id)
-    return engine.analyze(games)
+def run_combat_engine(games=None, player_id=None, cache_path=None) -> Optional[EngineOutput]:
+    if games is not None and player_id is not None:
+        engine = CombatEngine(player_id)
+        return engine.analyze(games)
+    cache_path = cache_path or "C:\\Facecheck\\facecheck_cache.json"
+    return run_engine_from_cache(CombatEngine, cache_path, games=games, player_id=player_id)
 
 
 if __name__ == "__main__":

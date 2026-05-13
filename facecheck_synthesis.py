@@ -1270,15 +1270,29 @@ def run_synthesis(game: Dict, engines: MultiEngineOutput,
 
 if __name__ == "__main__":
     # Test synthesis
-    import json
-    from facecheck_engine_death import DeathEngine
-    from facecheck_engine_economy import EconomyEngine
-    from facecheck_engine_combat import CombatEngine
-    from facecheck_engine_durability import DurabilityEngine
-    from facecheck_engine_vision import VisionEngine
-    from facecheck_engine_objective import ObjectiveEngine
-    from facecheck_engine_draft import DraftEngine
+    from facecheck_engine_death import run_death_engine
+    from facecheck_engine_economy import run_economy_engine
+    from facecheck_engine_combat import run_combat_engine
+    from facecheck_engine_durability import run_durability_engine
+    from facecheck_engine_vision import run_vision_engine
+    from facecheck_engine_objective import run_objective_engine
+    from facecheck_engine_draft import run_draft_engine
 
+    # Run engines using convenience functions (loads from cache)
+    death_output = run_death_engine()
+    economy_output = run_economy_engine()
+    combat_output = run_combat_engine()
+    durability_output = run_durability_engine()
+    vision_output = run_vision_engine()
+    objective_output = run_objective_engine()
+    draft_output = run_draft_engine()
+
+    if not death_output:
+        print("No cache found. Run 'face fetch' first.")
+        exit(1)
+
+    # Load cache for games and player_id
+    import json
     try:
         with open("C:\\Facecheck\\facecheck_cache.json", 'r') as f:
             cache = json.load(f)
@@ -1288,21 +1302,11 @@ if __name__ == "__main__":
         print("No cache found. Run 'face fetch' first.")
         exit(1)
 
-    # Get latest game
     if not games:
         print("No games in cache.")
         exit(1)
 
     latest_game = games[0]
-
-    # Run all 7 engines
-    death_output = DeathEngine(player_id).analyze(games)
-    economy_output = EconomyEngine(player_id).analyze(games)
-    combat_output = CombatEngine(player_id).analyze(games)
-    durability_output = DurabilityEngine(player_id).analyze(games)
-    vision_output = VisionEngine(player_id).analyze(games)
-    objective_output = ObjectiveEngine(player_id).analyze(games)
-    draft_output = DraftEngine(player_id).analyze(games)
 
     engines = MultiEngineOutput(
         death=death_output, economy=economy_output, combat=combat_output,

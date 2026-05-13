@@ -727,13 +727,13 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
                 player_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
 
             # Run all 7 engines on full history
-            death_output = run_death_engine()
-            economy_output = run_economy_engine()
-            combat_output = run_combat_engine()
-            durability_output = run_durability_engine()
-            vision_output = run_vision_engine()
-            objective_output = run_objective_engine()
-            draft_output = run_draft_engine()
+            death_output = run_death_engine(games=historical_games, player_id=player_id)
+            economy_output = run_economy_engine(games=historical_games, player_id=player_id)
+            combat_output = run_combat_engine(games=historical_games, player_id=player_id)
+            durability_output = run_durability_engine(games=historical_games, player_id=player_id)
+            vision_output = run_vision_engine(games=historical_games, player_id=player_id)
+            objective_output = run_objective_engine(games=historical_games, player_id=player_id)
+            draft_output = run_draft_engine(games=historical_games, player_id=player_id)
 
             if death_output:
                 # Load player model
