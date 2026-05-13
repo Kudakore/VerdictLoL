@@ -33,8 +33,8 @@ cd facecheck
 ### 3. Configure your API key
 
 ```bash
-copy config.py config.py
-# Edit config.py and set:
+copy config.py config_local.py
+# Edit config_local.py and set:
 #   API_KEY = "RGAPI-..."
 #   MY_GAME_NAME = "YourSummonerName"
 #   MY_TAG_LINE  = "YourTag"
