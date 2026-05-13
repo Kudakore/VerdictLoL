@@ -726,16 +726,25 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
                 from config import MY_GAME_NAME, MY_TAG_LINE
                 player_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
 
-            # Run all 7 engines on full history
-            death_output = run_death_engine(games=historical_games, player_id=player_id)
-            economy_output = run_economy_engine(games=historical_games, player_id=player_id)
-            combat_output = run_combat_engine(games=historical_games, player_id=player_id)
-            durability_output = run_durability_engine(games=historical_games, player_id=player_id)
-            vision_output = run_vision_engine(games=historical_games, player_id=player_id)
-            objective_output = run_objective_engine(games=historical_games, player_id=player_id)
-            draft_output = run_draft_engine(games=historical_games, player_id=player_id)
+            # Try cached engine outputs first, fall back to running all 7
+            from facecheck_engine_cache import load_engine_outputs, save_engine_outputs
+            engines = load_engine_outputs(player_id, historical_games)
+            if engines is None:
+                death_output = run_death_engine(games=historical_games, player_id=player_id)
+                economy_output = run_economy_engine(games=historical_games, player_id=player_id)
+                combat_output = run_combat_engine(games=historical_games, player_id=player_id)
+                durability_output = run_durability_engine(games=historical_games, player_id=player_id)
+                vision_output = run_vision_engine(games=historical_games, player_id=player_id)
+                objective_output = run_objective_engine(games=historical_games, player_id=player_id)
+                draft_output = run_draft_engine(games=historical_games, player_id=player_id)
+                engines = MultiEngineOutput(
+                    death=death_output, economy=economy_output, combat=combat_output,
+                    durability=durability_output, vision=vision_output,
+                    objective=objective_output, draft=draft_output,
+                )
+                save_engine_outputs(player_id, historical_games, engines)
 
-            if death_output:
+            if engines.death:
                 # Load player model
                 player_model = get_or_create_player_model(player_id, historical_games)
 
@@ -760,11 +769,6 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
                 except Exception as e:
                     pass  # SimilarityEngine is best-effort; don't block verdict
 
-                engines = MultiEngineOutput(
-                    death=death_output, economy=economy_output, combat=combat_output,
-                    durability=durability_output, vision=vision_output,
-                    objective=objective_output, draft=draft_output,
-                )
                 synthesis = SynthesisLayer(player_model,
                                           similarity_output=similarity_output,
                                           cluster_membership=cluster_membership)
@@ -778,42 +782,27 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
             print("  Falling back to legacy analysis...")
 
     if not synthesis_active:
-        # ── WHAT HAPPENED (Legacy) ────────────────────────────────
-        findings = diagnose_game(game, historical_games=historical_games)
+        # ── RAW STATS (no synthesis available) ─────────────────────
+        print(f"\n  ── RAW STATS {'─'*46}")
+        k = game.get("kills", 0)
+        d = game.get("deaths", 0)
+        a = game.get("assists", 0)
+        cs = game.get("cs", 0) or game.get("total_minions_killed", 0)
+        cs_15 = game.get("cs_15", 0)
+        gold = game.get("gold_earned", 0)
+        dmg = game.get("damage_dealt", 0) or game.get("total_damage_dealt_to_champions", 0)
+        dmg_taken = game.get("damage_taken", 0) or game.get("total_damage_taken", 0)
+        vision = game.get("vision_score", 0)
+        wards = game.get("control_wards_bought", 0) or game.get("vision_wards_bought_in_game", 0)
+        duration = game.get("duration", 0)
+        result = "WIN" if game.get("win") else "LOSS"
 
-        if findings:
-            print(f"\n  ── WHAT HAPPENED {'─'*45}")
-            level_order = {"CRITICAL": 0, "CLEAR": 1, "NOTABLE": 2, "POSITIVE": 3}
-            findings.sort(key=lambda f: level_order.get(f["level"], 4))
-
-            for f in findings:
-                level = f["level"]
-                if level == "POSITIVE":
-                    badge = "[+]"
-                elif level == "CRITICAL":
-                    badge = "[CRITICAL]"
-                elif level == "CLEAR":
-                    badge = "[CLEAR]"
-                else:
-                    badge = "[NOTABLE]"
-                # Wrap text at 70 chars
-                text = f["text"]
-                print(f"  {badge} {text}")
-
-        # ── VERDICT ───────────────────────────────────────────────
-        verdict = generate_verdict(game, findings)
-        print(f"\n  ── VERDICT {'─'*51}")
-        # Word wrap verdict at ~70 chars
-        words = verdict.split()
-        line = "  "
-        for word in words:
-            if len(line) + len(word) + 1 > 72:
-                print(line)
-                line = "  " + word
-            else:
-                line = line + " " + word if line.strip() else "  " + word
-        if line.strip():
-            print(line)
+        print(f"  {result}  |  KDA: {k}/{d}/{a}  |  CS: {cs} (CS@15: {cs_15})")
+        print(f"  Gold: {fmt_k(gold)}  |  Damage: {fmt_k(dmg)}  |  Damage taken: {fmt_k(dmg_taken)}")
+        print(f"  Vision: {vision:.0f}  |  Control wards: {wards}  |  Duration: {duration:.0f} min")
+        if d > 0:
+            print(f"  KDA ratio: {((k + a) / d):.1f}:1")
+        print()
 
     # ── TEAM BREAKDOWN ────────────────────────────────────────────
     print_team_breakdown(game)
@@ -828,10 +817,6 @@ def print_compact_game(game, game_number, historical_games=None):
     win = game["win"]
     result = "WIN" if win else "LOSS"
     enemy = game.get("enemy", {})
-    findings = diagnose_game(game, historical_games=historical_games)
-    critical = [f for f in findings if f["level"] == "CRITICAL"]
-    positives = [f for f in findings if f["level"] == "POSITIVE"]
-
     kda = f"{game['kills']}/{game['deaths']}/{game['assists']}"
     build_str = " → ".join(game.get("build_order", [])[:3])
     if len(game.get("build_order", [])) > 3:
@@ -846,32 +831,125 @@ def print_compact_game(game, game_number, historical_games=None):
         cs_diff = game['cs_final'] - enemy.get('cs', 0)
         print(f"  │  Enemy: {enemy['champion']}  {enemy_kda}  |  CS: {enemy.get('cs', 0)} ({fmt_num(cs_diff, plus=True)})")
 
-    if critical:
-        for f in critical[:2]:
-            print(f"  │  [CRITICAL] {f['text'][:80]}")
-    elif not win and not positives:
-        print(f"  │  No dominant loss factors identified.")
-
-    if positives:
-        for f in positives[:1]:
-            print(f"  │  [+] {f['text'][:80]}")
-
-    verdict = generate_verdict(game, findings)
-    # One line verdict
-    verdict_short = verdict[:100] + "..." if len(verdict) > 100 else verdict
-    print(f"  └─ {verdict_short}")
+    # Raw stats summary (no legacy diagnosis)
+    d = game.get("deaths", 0)
+    k = game.get("kills", 0)
+    a = game.get("assists", 0)
+    kda_ratio = f"{((k + a) / d):.1f}:1" if d > 0 else "Perfect"
+    print(f"  └─ KDA {kda_ratio}  |  CS@15: {game.get('cs_15', 'N/A')}  |  Vision: {game.get('vision_score', game.get('vision', 'N/A'))}")
 
 # ─────────────────────────────────────────────
 # AGGREGATE WORST / BEST
 # ─────────────────────────────────────────────
 
-def print_worst(games, champion=None):
-    from facecheck_analysis import run_analysis, split_by_result, robust_avg, winrate
+def _print_basic_worst(games, champion, wins, losses, wr):
+    """Raw-stats fallback when synthesis is unavailable."""
+    from facecheck_aggregate import _winrate
+
+    # Worst items (pure stats)
+    from collections import defaultdict
+    first_item_games = defaultdict(list)
+    for g in games:
+        if g.get("first_item"):
+            first_item_games[g["first_item"]].append(g)
+    worst_items = []
+    for item, ig in first_item_games.items():
+        if len(ig) >= 3:
+            wr_item = _winrate(ig)
+            if wr_item is not None and wr_item < 45:
+                worst_items.append((item, wr_item, len(ig)))
+    worst_items.sort(key=lambda x: x[1])
+
+    # Worst champions (pure stats)
+    champ_games = defaultdict(list)
+    for g in games:
+        champ_games[g["champion"]].append(g)
+    worst_champs = []
+    for champ, cg in champ_games.items():
+        if len(cg) >= 5:
+            wr_c = _winrate(cg)
+            if wr_c is not None and wr_c < 45:
+                worst_champs.append((champ, wr_c, len(cg)))
+    worst_champs.sort(key=lambda x: x[1])
+
+    if worst_items:
+        print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
+        for item, wr_item, n in worst_items:
+            print(f"  {item}: {wr_item}% winrate across {n} games.")
+        print()
+
+    if worst_champs and not champion:
+        print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
+        for champ, wr_c, n in worst_champs:
+            print(f"  {champ}: {wr_c}% winrate across {n} games.")
+        print()
+
+    print(f"\n  ── BOTTOM LINE ──────────────────────────────────────────────")
+    if worst_items:
+        print(f"  Build: {worst_items[0][0]} at {worst_items[0][1]}% WR.")
+    if worst_champs and not champion:
+        print(f"  Champion: {worst_champs[0][0]} at {worst_champs[0][1]}% WR.")
+    if not worst_items and not worst_champs:
+        print(f"  No dominant weakness found at {wr}% WR. Focus on consistency.")
+
+
+def _print_basic_best(games, champion, wins, losses, wr):
+    """Raw-stats fallback when synthesis is unavailable."""
+    from facecheck_aggregate import _winrate
     from collections import defaultdict
 
+    # Best items (pure stats)
+    first_item_games = defaultdict(list)
+    for g in games:
+        if g.get("first_item"):
+            first_item_games[g["first_item"]].append(g)
+    best_items = []
+    for item, ig in first_item_games.items():
+        if len(ig) >= 3:
+            wr_item = _winrate(ig)
+            if wr_item is not None and wr_item >= 55:
+                best_items.append((item, wr_item, len(ig)))
+    best_items.sort(key=lambda x: x[1], reverse=True)
+
+    # Best champions (pure stats)
+    champ_games = defaultdict(list)
+    for g in games:
+        champ_games[g["champion"]].append(g)
+    best_champs = []
+    for champ, cg in champ_games.items():
+        if len(cg) >= 5:
+            wr_c = _winrate(cg)
+            if wr_c is not None and wr_c >= 55:
+                best_champs.append((champ, wr_c, len(cg)))
+    best_champs.sort(key=lambda x: x[1], reverse=True)
+
+    if best_items:
+        print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
+        for item, wr_item, n in best_items:
+            print(f"  {item}: {wr_item}% winrate across {n} games.")
+        print()
+
+    if best_champs and not champion:
+        print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
+        for champ, wr_c, n in best_champs:
+            print(f"  {champ}: {wr_c}% winrate across {n} games.")
+        print()
+
+    print(f"\n  ── BOTTOM LINE ──────────────────────────────────────────────")
+    if best_items:
+        print(f"  Build: {best_items[0][0]} at {best_items[0][1]}% WR.")
+    if best_champs:
+        print(f"  Champion: {best_champs[0][0]} at {best_champs[0][1]}% WR.")
+    if not best_items and not best_champs:
+        print(f"  No dominant strength found at {wr}% WR.")
+
+
+def print_worst(games, champion=None, player_id=None):
+    from facecheck_aggregate import synthesize_games, worst_patterns, _winrate, _split_by_result
+
     label = f"FACECHECK WORST — {champion}" if champion else "FACECHECK WORST"
-    wins, losses = split_by_result(games)
-    wr = round(len(wins) / len(games) * 100, 1) if games else 0
+    wins, losses = _split_by_result(games)
+    wr = _winrate(games) or 0
 
     print(f"\n  {'='*60}")
     print(f"  {label}")
@@ -880,126 +958,45 @@ def print_worst(games, champion=None):
     print(f"  {'='*60}")
     print(f"\n  Here is what is costing you games. No softening.\n")
 
-    # Run full analysis to get findings
-    findings = run_analysis(games)
-    critical = [f for f in findings if f["confidence_label"] == "CRITICAL"]
-    clear = [f for f in findings if f["confidence_label"] == "CLEAR"]
+    # Run synthesis across all games
+    if player_id and SYNTHESIS_AVAILABLE and len(games) >= 3:
+        pairs = synthesize_games(games, player_id)
+        data = worst_patterns(pairs)
 
-    # Worst items
-    first_item_games = defaultdict(list)
-    for g in games:
-        if g.get("first_item"):
-            first_item_games[g["first_item"]].append(g)
+        if data["items"]:
+            print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
+            for item_info in data["items"]:
+                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games. This item is actively costing you.")
+            print()
 
-    worst_items = []
-    for item, ig in first_item_games.items():
-        if len(ig) >= 3:
-            wr_item = winrate(ig)
-            if wr_item is not None and wr_item < 45:
-                worst_items.append((item, wr_item, len(ig)))
-    worst_items.sort(key=lambda x: x[1])
+        if data["champions"] and not champion:
+            print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
+            for champ_info in data["champions"]:
+                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games. The data does not support this pick.")
+            print()
 
-    # Worst champions
-    from collections import defaultdict as dd
-    champ_games = dd(list)
-    for g in games:
-        champ_games[g["champion"]].append(g)
-    worst_champs = []
-    for champ, cg in champ_games.items():
-        if len(cg) >= 5:
-            wr_c = winrate(cg)
-            if wr_c is not None and wr_c < 45:
-                worst_champs.append((champ, wr_c, len(cg)))
-    worst_champs.sort(key=lambda x: x[1])
+        if data["mechanisms"]:
+            print(f"  ── YOUR WORST PATTERNS ──────────────────────────────────────")
+            for mech in data["mechanisms"][:6]:
+                print(f"  {mech['mechanism'].replace('_', ' ').title()}: {mech['pct']}% of losses ({mech['count']} games)")
+                if mech["lessons"]:
+                    print(f"    → {mech['lessons'][0]}")
+            print()
 
-    if worst_items:
-        print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
-        for item, wr_item, n in worst_items:
-            print(f"  {item}: {wr_item}% winrate across {n} games. This item is actively costing you.")
-        print()
-
-    if worst_champs and not champion:
-        print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
-        for champ, wr_c, n in worst_champs:
-            print(f"  {champ}: {wr_c}% winrate across {n} games. The data does not support this pick.")
-        print()
-
-    print(f"  ── YOUR WORST PATTERNS ──────────────────────────────────────")
-    shown = 0
-    for f in critical + clear:
-        if shown >= 6:
-            break
-        ftype = f["type"]
-        data = f["data"]
-
-        if ftype == "first_item_underperform":
-            print(f"  {data['item']} first: {data['winrate']}% across {data['games']} games. Change it.")
-        elif ftype.startswith("delta_") and f["data"].get("direction") == "lower":
-            print(f"  {data['metric']}: {data['loss_avg']} in losses vs {data['win_avg']} in wins. You die more when you lose.")
-        elif ftype.startswith("delta_"):
-            print(f"  {data['metric']}: {data['win_avg']} in wins vs {data['loss_avg']} in losses. Gap: {data['delta']}.")
-        elif ftype == "short_loss_pattern":
-            print(f"  {data['pct']}% of losses end before 22 minutes. You are getting stomped early, repeatedly.")
-        elif ftype == "cs15_gap":
-            print(f"  CS at 15min: {data['loss_avg']} in losses vs {data['win_avg']} in wins. You fall behind early and stay there.")
-        elif ftype == "pattern_invaded_early":
-            print(f"  Invaded pattern in {data['pct']}% of losses. Pathing and ward coverage before second buff.")
-        elif ftype == "pattern_won_jungle_lost_game":
-            print(f"  Won jungle, lost game in {data['pct']}% of losses. Average {data['avg_deaths']} deaths. Stop fighting when ahead.")
-        elif ftype == "cs_differential":
-            print(f"  CS vs enemy: {round(data['win_avg_diff']):+} in wins, {round(data['loss_avg_diff']):+} in losses. The farm race determines the result.")
-        elif ftype == "damage_differential":
-            print(f"  Damage vs enemy: {round(data['win_avg_diff']):+} in wins, {round(data['loss_avg_diff']):+} in losses.")
-        else:
-            continue
-        shown += 1
-
-    print(f"\n  ── BOTTOM LINE ──────────────────────────────────────────────")
-    bottom_lines = []
-
-    if worst_items:
-        bottom_lines.append(f"  Build: {worst_items[0][0]} at {worst_items[0][1]}% WR. This is a known losing start. Change it first.")
-    if worst_champs and not champion:
-        bottom_lines.append(f"  Champion: {worst_champs[0][0]} at {worst_champs[0][1]}% WR across {worst_champs[0][2]} games. The data does not support this pick.")
-    if critical:
-        top = critical[0]
-        ftype = top["type"].lower()
-        title = top.get("title", "").lower()
-        data = top.get("data", {})
-        if "cs" in ftype or "farm" in title:
-            bottom_lines.append(f"  Farm: Losing the CS race is your most consistent loss condition. Win the 1v1 in farm.")
-        elif "invaded" in ftype or "early" in ftype:
-            bottom_lines.append(f"  Early game: You are losing before mid-game starts in too many games. One ward on your second buff entrance.")
-        elif "death" in ftype:
-            bottom_lines.append(f"  Deaths: You die too much. Every death is gold and tempo handed to the enemy.")
-        elif "vision" in ftype or "no_vision" in ftype:
-            bottom_lines.append(f"  Vision: 0 control wards in losses is a pattern. Two per game changes your dragon control.")
-        elif "ahead_threw" in ftype:
-            bottom_lines.append(f"  Decision making: You earn leads and lose them. Convert leads into objectives, not more fights.")
-        elif "team_feed" in ftype:
-            bottom_lines.append(f"  Team dependency: {data.get('pct', '')}% of losses your CS was fine but your team collapsed. Recognize these early and tilt-manage.")
-        else:
-            bottom_lines.append(f"  Primary issue: {top.get('title', 'See patterns above')}. Address this before anything else.")
-
-    if not bottom_lines:
-        # Guaranteed fallback — summarize WR with actionable
-        wr_val = round(len(wins) / len(games) * 100, 1) if games else 0
-        if wr_val < 45:
-            bottom_lines.append(f"  At {wr_val}% WR the data needs more games to surface clear patterns. Keep playing and re-run.")
-        else:
-            bottom_lines.append(f"  No dominant weakness found at {wr_val}% WR. Focus on consistency — the small edges compound.")
-
-    for line in bottom_lines:
-        print(line)
+        print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+        for line in data["bottom_line"].split("\n"):
+            print(f"  {line}")
+    else:
+        # Not enough data or synthesis unavailable — show basic stats
+        _print_basic_worst(games, champion, wins, losses, wr)
     print()
 
-def print_best(games, champion=None):
-    from facecheck_analysis import run_analysis, split_by_result, winrate
-    from collections import defaultdict
+def print_best(games, champion=None, player_id=None):
+    from facecheck_aggregate import synthesize_games, best_patterns, _winrate, _split_by_result
 
     label = f"FACECHECK BEST — {champion}" if champion else "FACECHECK BEST"
-    wins, losses = split_by_result(games)
-    wr = round(len(wins) / len(games) * 100, 1) if games else 0
+    wins, losses = _split_by_result(games)
+    wr = _winrate(games) or 0
 
     print(f"\n  {'='*60}")
     print(f"  {label}")
@@ -1008,71 +1005,35 @@ def print_best(games, champion=None):
     print(f"  {'='*60}")
     print(f"\n  Here is what is working for you. Keep doing this.\n")
 
-    # Best items
-    first_item_games = defaultdict(list)
-    for g in games:
-        if g.get("first_item"):
-            first_item_games[g["first_item"]].append(g)
+    if player_id and SYNTHESIS_AVAILABLE and len(games) >= 3:
+        pairs = synthesize_games(games, player_id)
+        data = best_patterns(pairs)
 
-    best_items = []
-    for item, ig in first_item_games.items():
-        if len(ig) >= 3:
-            wr_item = winrate(ig)
-            if wr_item is not None and wr_item >= 55:
-                best_items.append((item, wr_item, len(ig)))
-    best_items.sort(key=lambda x: x[1], reverse=True)
+        if data["items"]:
+            print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
+            for item_info in data["items"]:
+                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games. This is a winning pattern.")
+            print()
 
-    # Best champions
-    champ_games = defaultdict(list)
-    for g in games:
-        champ_games[g["champion"]].append(g)
-    best_champs = []
-    for champ, cg in champ_games.items():
-        if len(cg) >= 5:
-            wr_c = winrate(cg)
-            if wr_c is not None and wr_c >= 55:
-                best_champs.append((champ, wr_c, len(cg)))
-    best_champs.sort(key=lambda x: x[1], reverse=True)
+        if data["champions"] and not champion:
+            print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
+            for champ_info in data["champions"]:
+                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games. This champion works for you.")
+            print()
 
-    if best_items:
-        print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
-        for item, wr_item, n in best_items:
-            print(f"  {item}: {wr_item}% winrate across {n} games. This is a winning pattern.")
-        print()
+        if data["mechanisms"]:
+            print(f"  ── WHAT YOUR WINNING GAMES HAVE IN COMMON ───────────────────")
+            for mech in data["mechanisms"][:5]:
+                print(f"  {mech['mechanism'].replace('_', ' ').title()}: {mech['pct']}% of wins ({mech['count']} games)")
+                if mech["lessons"]:
+                    print(f"    → {mech['lessons'][0]}")
+            print()
 
-    if best_champs and not champion:
-        print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
-        for champ, wr_c, n in best_champs:
-            print(f"  {champ}: {wr_c}% winrate across {n} games. This champion works for you.")
-        print()
-
-    # Win game patterns
-    findings = run_analysis(games)
-    print(f"  ── WHAT YOUR WINNING GAMES HAVE IN COMMON ───────────────────")
-
-    win_patterns = []
-    for f in findings:
-        ftype = f["type"]
-        data = f["data"]
-        if ftype.startswith("delta_") and data.get("direction") == "higher":
-            win_patterns.append(f"  Higher {data['metric']} in every win. Wins avg: {data['win_avg']}. Keep pushing this.")
-        elif ftype == "pattern_won_jungle_lost_game":
-            win_patterns.append(f"  When you win the farm battle, you win the game. Farm is your win condition.")
-        elif ftype == "cs_differential":
-            win_patterns.append(f"  +{round(data['win_avg_diff'])} CS vs enemy jungler in wins. The farm battle is the game.")
-        elif ftype == "pattern_dragon_control":
-            win_patterns.append(f"  Dragon control correlates with wins. Your team wins when it controls drakes.")
-
-    for p in win_patterns[:5]:
-        print(p)
-
-    print(f"\n  ── BOTTOM LINE ──────────────────────────────────────────────")
-    if best_items:
-        print(f"  Build: {best_items[0][0]} at {best_items[0][1]}% WR. This is your winning item. Do not deviate.")
-    if best_champs:
-        print(f"  Champion: {best_champs[0][0]} at {best_champs[0][1]}% WR. When you want to climb, play this.")
-    if win_patterns:
-        print(f"  Pattern: Your wins are built on farm advantage and map control. Protect the early game.")
+        print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+        for line in data["bottom_line"].split("\n"):
+            print(f"  {line}")
+    else:
+        _print_basic_best(games, champion, wins, losses, wr)
     print()
 
 # ─────────────────────────────────────────────
@@ -1081,7 +1042,7 @@ def print_best(games, champion=None):
 
 def print_pool(games, min_games=3):
     from collections import defaultdict
-    from facecheck_analysis import winrate
+    from facecheck_aggregate import _winrate
 
     champ_games = defaultdict(list)
     for g in games:
@@ -2028,13 +1989,13 @@ if __name__ == "__main__":
         if not ranked:
             print("No ranked games found.")
             sys.exit(1)
-        print_worst(ranked, champion=champion)
+        print_worst(ranked, champion=champion, player_id=player_id)
 
     elif mode == "best":
         if not ranked:
             print("No ranked games found.")
             sys.exit(1)
-        print_best(ranked, champion=champion)
+        print_best(ranked, champion=champion, player_id=player_id)
 
     elif mode == "pool":
         min_g = count or 3

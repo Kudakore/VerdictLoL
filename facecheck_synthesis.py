@@ -29,6 +29,30 @@ class MultiEngineOutput:
     objective: Optional[EngineOutput] = None
     draft: Optional[EngineOutput] = None
 
+    def to_dict(self) -> Dict:
+        return {
+            "death": self.death.to_dict() if self.death else None,
+            "economy": self.economy.to_dict() if self.economy else None,
+            "combat": self.combat.to_dict() if self.combat else None,
+            "durability": self.durability.to_dict() if self.durability else None,
+            "vision": self.vision.to_dict() if self.vision else None,
+            "objective": self.objective.to_dict() if self.objective else None,
+            "draft": self.draft.to_dict() if self.draft else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "MultiEngineOutput":
+        from facecheck_engine_base import EngineOutput
+        return cls(
+            death=EngineOutput.from_dict(d["death"]) if d.get("death") else None,
+            economy=EngineOutput.from_dict(d["economy"]) if d.get("economy") else None,
+            combat=EngineOutput.from_dict(d["combat"]) if d.get("combat") else None,
+            durability=EngineOutput.from_dict(d["durability"]) if d.get("durability") else None,
+            vision=EngineOutput.from_dict(d["vision"]) if d.get("vision") else None,
+            objective=EngineOutput.from_dict(d["objective"]) if d.get("objective") else None,
+            draft=EngineOutput.from_dict(d["draft"]) if d.get("draft") else None,
+        )
+
 
 @dataclass
 class Evidence:

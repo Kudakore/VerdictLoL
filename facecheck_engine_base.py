@@ -5,9 +5,10 @@ Shared base classes for all domain-pure extraction engines.
 No engine-specific logic here — just the data structures.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from dataclasses import dataclass, field, asdict
+from typing import List, Dict, Optional, Any
 from datetime import datetime
+import json
 import statistics
 
 
@@ -47,6 +48,31 @@ class Distribution:
             sample_size=n
         )
 
+    def to_dict(self) -> Dict:
+        return {
+            "values": self.values,
+            "mean": self.mean,
+            "median": self.median,
+            "std_dev": self.std_dev,
+            "percentiles": {str(k): v for k, v in self.percentiles.items()},
+            "min": self.min,
+            "max": self.max,
+            "sample_size": self.sample_size,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "Distribution":
+        return cls(
+            values=d["values"],
+            mean=d["mean"],
+            median=d["median"],
+            std_dev=d["std_dev"],
+            percentiles={int(k): v for k, v in d["percentiles"].items()},
+            min=d["min"],
+            max=d["max"],
+            sample_size=d["sample_size"],
+        )
+
 
 @dataclass
 class EngineNode:
@@ -54,8 +80,27 @@ class EngineNode:
     node_id: str
     timestamp_min: float
     node_type: str
-    value: any
+    value: Any
     context: Dict
+
+    def to_dict(self) -> Dict:
+        return {
+            "node_id": self.node_id,
+            "timestamp_min": self.timestamp_min,
+            "node_type": self.node_type,
+            "value": self.value,
+            "context": self.context,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "EngineNode":
+        return cls(
+            node_id=d["node_id"],
+            timestamp_min=d["timestamp_min"],
+            node_type=d["node_type"],
+            value=d["value"],
+            context=d["context"],
+        )
 
 
 @dataclass
@@ -68,6 +113,29 @@ class EngineSignature:
     end_min: float
     features: Dict
     confidence: float
+
+    def to_dict(self) -> Dict:
+        return {
+            "signature_id": self.signature_id,
+            "signature_type": self.signature_type,
+            "nodes": self.nodes,
+            "start_min": self.start_min,
+            "end_min": self.end_min,
+            "features": self.features,
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "EngineSignature":
+        return cls(
+            signature_id=d["signature_id"],
+            signature_type=d["signature_type"],
+            nodes=d["nodes"],
+            start_min=d["start_min"],
+            end_min=d["end_min"],
+            features=d["features"],
+            confidence=d["confidence"],
+        )
 
 
 @dataclass
@@ -82,6 +150,33 @@ class EngineOutput:
     confidence: float
     source_games: List[str]
     raw_metrics: Dict
+
+    def to_dict(self) -> Dict:
+        return {
+            "engine_name": self.engine_name,
+            "timestamp": self.timestamp.isoformat(),
+            "distributions": {k: v.to_dict() for k, v in self.distributions.items()},
+            "nodes": [n.to_dict() for n in self.nodes],
+            "signatures": [s.to_dict() for s in self.signatures],
+            "correlation_space": self.correlation_space,
+            "confidence": self.confidence,
+            "source_games": self.source_games,
+            "raw_metrics": self.raw_metrics,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> "EngineOutput":
+        return cls(
+            engine_name=d["engine_name"],
+            timestamp=datetime.fromisoformat(d["timestamp"]),
+            distributions={k: Distribution.from_dict(v) for k, v in d["distributions"].items()},
+            nodes=[EngineNode.from_dict(n) for n in d["nodes"]],
+            signatures=[EngineSignature.from_dict(s) for s in d["signatures"]],
+            correlation_space=d["correlation_space"],
+            confidence=d["confidence"],
+            source_games=d["source_games"],
+            raw_metrics=d["raw_metrics"],
+        )
 
 
 def run_engine_from_cache(engine_class, cache_path: str = "C:\\Facecheck\\facecheck_cache.json",
