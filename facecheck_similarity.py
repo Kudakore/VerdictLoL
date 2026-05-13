@@ -985,7 +985,7 @@ def _build_signal_queries() -> List[SignalQuery]:
     queries.append(SignalQuery(
         name="CS deficit mid",
         description="Fewer than 80 CS at 15 minutes",
-        signal_fn=lambda g: (g.get("cs_at_15") or 0) < 80,
+        signal_fn=lambda g: (g.get("cs_15") or 0) < 80,
         min_games=15,
         category="harmful"
     ))

@@ -950,25 +950,26 @@ class SynthesisLayer:
                 # games_on >= 3 means the signature exists. wr is the win rate across those games.
                 # WR thresholds are personal: compare champ WR to player's overall WR.
                 if games_on >= 3:
-                    # Compute player's overall WR from source games
-                    all_wins = 0
-                    all_games_count = 0
-                    if engines.draft and engines.draft.source_games:
-                        # Need to get actual game dicts to compute overall WR
-                        # This is expensive; use the champ_wr delta from signature instead
-                        pass
-                    # Use champion WR relative to 50% as fallback baseline
-                    overall_baseline = 0.50
+                    # Compute player's overall WR from similarity_output games
+                    overall_baseline = 0.50  # fallback
+                    if self.similarity_output and self.similarity_output.games:
+                        total = len(self.similarity_output.games)
+                        if total >= 10:
+                            overall_baseline = sum(
+                                1 for g in self.similarity_output.games if g.get("win", False)
+                            ) / total
                     if wr > overall_baseline + 0.12:
+                        delta = wr - overall_baseline
                         lessons.append(Lesson(
                             lesson_type="draft",
-                            text=f"Comfort on {champ} ({games_on} games, {wr:.0%} WR). Prioritize when available.",
+                            text=f"Comfort on {champ} ({games_on} games, {wr:.0%} WR vs {overall_baseline:.0%} overall — +{delta:.0%}). Prioritize when available.",
                             priority="medium"
                         ))
                     elif wr < overall_baseline - 0.10:
+                        delta = overall_baseline - wr
                         lessons.append(Lesson(
                             lesson_type="draft",
-                            text=f"{champ}: {games_on} games at {wr:.0%} WR. Structural underperformance on this pick.",
+                            text=f"{champ}: {games_on} games at {wr:.0%} WR vs {overall_baseline:.0%} overall — {delta:.0%} below baseline. Structural underperformance on this pick.",
                             priority="medium"
                         ))
 
