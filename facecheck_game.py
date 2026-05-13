@@ -1959,7 +1959,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     if not args:
-        print("Usage: face last | face game N | face games [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face worst [champ] | face best [champ]")
+        print("Usage: face lastgame | face game N | face games [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face worst [champ] | face best [champ]")
         sys.exit(1)
 
     mode = args[0]
