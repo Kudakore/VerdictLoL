@@ -53,7 +53,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     if not args:
-        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face enemy [--watch] | face worst [champ] | face best [champ]")
+        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face enemy | face worst [champ] | face best [champ]")
         sys.exit(1)
 
     mode = args[0]
@@ -258,18 +258,13 @@ if __name__ == "__main__":
 
     elif mode == "enemy":
         # Auto-detect same-position enemy in current game via Spectator API
-        watch = "--watch" in args or "-w" in args
+        # If no game found, wait for one (champ select / loading screen)
         puuid = get_puuid()
         game = get_current_game(puuid)
 
-        if not game and not watch:
-            print("\n  No active game detected.")
-            print("  Start a game and try again, or use 'face enemy --watch' to wait.\n")
-            sys.exit(1)
-
-        if not game and watch:
+        if not game:
             import time
-            print("\n  Waiting for game...", end="", flush=True)
+            print("\n  No game detected. Waiting...", end="", flush=True)
             start = time.time()
             while time.time() - start < 120:
                 time.sleep(5)

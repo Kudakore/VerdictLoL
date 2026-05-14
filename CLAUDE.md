@@ -53,7 +53,7 @@ All commands available via `face`, `facecheck`, or `fc`:
 - `face compare Name#Tag [N]` — Delta comparison vs another player
 - `face counter [champ]` — How to beat a champion
 - `face intel [champ]` — Full champion intel profile
-- `face enemy [--watch]` — Live enemy scout via Spectator API
+- `face enemy` — Live enemy scout via Spectator API (auto-waits for game)
 - `face guide` — Playing guide
 - `face item [name]` — Item stats and build path
 - `face components [name]` — Full component tree
@@ -84,7 +84,7 @@ All commands available via `face`, `facecheck`, or `fc`:
 - Scout mode — arbitrary player analysis via same synthesis pipeline; per-player caching for engine outputs, player models, and game data
 - Compare mode — delta comparison between two players' patterns and distributions; observation rate deltas and distribution median deltas
 - Recent mode — pure match history with queue filtering, streaks, champion breakdown; no synthesis for speed
-- Enemy mode — live enemy scout via Spectator v5 API; auto-detects same-position enemy, shows role versatility, loss observations, and stat comparison; `face enemy --watch` polls until game detected
+- Enemy mode — live enemy scout via Spectator v5 API; auto-detects same-position enemy, shows role versatility, loss observations, and stat comparison; auto-waits for game if not detected
 
 ### Refactoring Plan (8 phases — ALL COMPLETE)
 - **Phase A** (DONE): Engine call interface refactored
