@@ -17,14 +17,14 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `facecheck_game.py` — CLI entry point and mode dispatch only
 - `facecheck_display.py` — Core display functions (fmt_num, fmt_k, print_full_game, print_compact_game, print_synthesis_block, print_team_breakdown, ROLE_LABELS, enemy_role_label)
 - `facecheck_aggregate.py` — synthesize_games, synthesize_games_with_engines, mine_observations, compare_players, worst_patterns, best_patterns, print_worst, print_best, print_pool (synthesis-native aggregate analysis + display, observation mining, player comparison)
-- `facecheck_special.py` — Specialized modes (run_select, print_matchups, print_guide, print_bans, print_heatmap, print_pathing, print_scout, print_compare, print_recent)
+- `facecheck_special.py` — Specialized modes (run_select, print_matchups, print_guide, print_bans, print_heatmap, print_pathing, print_scout, print_compare, print_recent, print_enemy)
 - `facecheck_engine_base.py` — Distribution, EngineNode, EngineSignature, EngineOutput (with to_dict/from_dict), run_engine_from_cache
 - `facecheck_engine_*.py` — 7 domain-pure extraction engines
 - `facecheck_engine_cache.py` — Engine output caching (save/load MultiEngineOutput JSON, keyed on player_id + games hash, 24h auto-invalidation)
 - `facecheck_synthesis.py` — SynthesisLayer, Verdict, MultiEngineOutput (with to_dict/from_dict), Evidence, Lesson, Observation
 - `facecheck_similarity.py` — SimilarityEngine, GameFingerprint, ClusterResult, PatternResult
 - `facecheck_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory (per-player caching via _player_model_path)
-- `facecheck_data.py` — Riot API, cache management, match record building, get_ranked_games, fetch_player_games (scout), resolve_riot_id
+- `facecheck_data.py` — Riot API, cache management, match record building, get_ranked_games, fetch_player_games (scout), resolve_riot_id, get_current_game (Spectator v5), resolve_puuid_to_riot_id
 - `facecheck_item.py` — Item and component lookup (standalone, not in synthesis pipeline)
 - `league_stats.py` — Match history stats, builds analysis (standalone)
 - `league_build.py` — Item and champion stat lookup (standalone)
@@ -53,6 +53,7 @@ All commands available via `face`, `facecheck`, or `fc`:
 - `face compare Name#Tag [N]` — Delta comparison vs another player
 - `face counter [champ]` — How to beat a champion
 - `face intel [champ]` — Full champion intel profile
+- `face enemy [--watch]` — Live enemy scout via Spectator API
 - `face guide` — Playing guide
 - `face item [name]` — Item stats and build path
 - `face components [name]` — Full component tree
@@ -83,6 +84,7 @@ All commands available via `face`, `facecheck`, or `fc`:
 - Scout mode — arbitrary player analysis via same synthesis pipeline; per-player caching for engine outputs, player models, and game data
 - Compare mode — delta comparison between two players' patterns and distributions; observation rate deltas and distribution median deltas
 - Recent mode — pure match history with queue filtering, streaks, champion breakdown; no synthesis for speed
+- Enemy mode — live enemy scout via Spectator v5 API; auto-detects same-position enemy, shows role versatility, loss observations, and stat comparison; `face enemy --watch` polls until game detected
 
 ### Refactoring Plan (8 phases — ALL COMPLETE)
 - **Phase A** (DONE): Engine call interface refactored

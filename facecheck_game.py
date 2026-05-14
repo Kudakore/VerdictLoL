@@ -15,7 +15,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Data layer
-from facecheck_data import load_cache, get_current_rank_string, get_ranked_games, fetch_player_games
+from facecheck_data import load_cache, get_current_rank_string, get_ranked_games, fetch_player_games, get_current_game, resolve_puuid_to_riot_id, get_puuid
 
 # Display
 from facecheck_display import print_full_game, print_compact_game
@@ -26,7 +26,7 @@ from facecheck_aggregate import print_worst, print_best, print_pool, synthesize_
 # Specialized modes
 from facecheck_special import (
     run_select, print_matchups, print_guide,
-    print_bans, print_heatmap, print_pathing, print_scout, print_compare, print_recent
+    print_bans, print_heatmap, print_pathing, print_scout, print_compare, print_recent, print_enemy
 )
 
 # Champion Intelligence — optional, graceful fallback
@@ -53,7 +53,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     if not args:
-        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face worst [champ] | face best [champ]")
+        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face enemy [--watch] | face worst [champ] | face best [champ]")
         sys.exit(1)
 
     mode = args[0]
@@ -255,6 +255,106 @@ if __name__ == "__main__":
             sys.exit(1)
 
         print_compare(ranked, my_pairs, my_engines, ref_ranked, ref_pairs, ref_engines, player_id, ref_player_id)
+
+    elif mode == "enemy":
+        # Auto-detect same-position enemy in current game via Spectator API
+        watch = "--watch" in args or "-w" in args
+        puuid = get_puuid()
+        game = get_current_game(puuid)
+
+        if not game and not watch:
+            print("\n  No active game detected.")
+            print("  Start a game and try again, or use 'face enemy --watch' to wait.\n")
+            sys.exit(1)
+
+        if not game and watch:
+            import time
+            print("\n  Waiting for game...", end="", flush=True)
+            start = time.time()
+            while time.time() - start < 120:
+                time.sleep(5)
+                print(".", end="", flush=True)
+                game = get_current_game(puuid)
+                if game:
+                    break
+            print()
+            if not game:
+                print("\n  No game detected after 2 minutes. Aborting.\n")
+                sys.exit(1)
+
+        # Parse game — find our position and team
+        participants = game.get("participants", [])
+        if not participants:
+            print("\n  Could not read game participants.\n")
+            sys.exit(1)
+
+        # Find ourselves
+        my_team = None
+        my_position = None
+        for p in participants:
+            if p.get("puuid") == puuid:
+                my_team = p.get("teamId")
+                pos = (p.get("individualPosition") or p.get("teamPosition") or "").strip()
+                from facecheck_special import SPECTATOR_ROLES
+                my_position = SPECTATOR_ROLES.get(pos, pos)
+                break
+
+        if not my_team:
+            print("\n  Could not find you in the current game.\n")
+            sys.exit(1)
+
+        # Find enemy same-position
+        enemies = [p for p in participants if p.get("teamId") != my_team]
+        enemy = None
+
+        if my_position and my_position != "N/A":
+            for p in enemies:
+                pos = (p.get("individualPosition") or p.get("teamPosition") or "").strip()
+                enemy_pos = SPECTATOR_ROLES.get(pos, pos)
+                if enemy_pos == my_position:
+                    enemy = p
+                    break
+
+        if not enemy:
+            # Position not matched — show all enemies and let user pick
+            # For now, just show the list
+            if not my_position or my_position == "N/A":
+                print(f"\n  Could not determine your position in this game.")
+            else:
+                print(f"\n  No enemy {my_position} found.")
+            print(f"  Enemy team:")
+            for p in enemies:
+                champ = p.get("championName", "?")
+                pos = SPECTATOR_ROLES.get((p.get("individualPosition") or "").strip(), "?")
+                print(f"    {champ} ({pos})")
+            print()
+            sys.exit(1)
+
+        enemy_champion = enemy.get("championName", "?")
+        enemy_puuid = enemy.get("puuid")
+        enemy_riot_id = resolve_puuid_to_riot_id(enemy_puuid)
+
+        if not enemy_riot_id:
+            print(f"\n  Could not identify enemy {enemy_champion}. Riot ID lookup failed.\n")
+            sys.exit(1)
+
+        # Fetch their ranked games
+        print(f"\n  Scouting {enemy_riot_id} ({enemy_champion})...")
+        result = fetch_player_games(enemy_riot_id, count=20)
+        if not result or not result[0]:
+            print(f"  Could not fetch games for {enemy_riot_id}.\n")
+            sys.exit(1)
+
+        enemy_games, enemy_player_id = result
+        enemy_ranked = [g for g in enemy_games if g.get("queue_id") in (420, 440)]
+
+        if len(enemy_ranked) < 3:
+            print(f"  Not enough ranked games for {enemy_riot_id} (need 3+, have {len(enemy_ranked)}).\n")
+            sys.exit(1)
+
+        print_enemy(enemy_ranked, enemy_player_id, enemy_riot_id,
+                     champion=enemy_champion, role=my_position,
+                     my_games=ranked, my_player_id=player_id)
 
     else:
         print(f"Unknown mode: {mode}")

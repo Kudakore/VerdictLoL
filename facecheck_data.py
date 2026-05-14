@@ -78,6 +78,37 @@ def get_rank_snapshot(puuid):
         }
     return snapshot
 
+
+def get_current_game(puuid=None):
+    """Check if player is in an active game. Returns game dict or None."""
+    if puuid is None:
+        puuid = get_puuid()
+    summoner_id = get_summoner_id(puuid)
+    if not summoner_id:
+        return None
+    url = f"https://{PLATFORM}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/{summoner_id}"
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code == 404:
+        return None
+    if resp.status_code != 200:
+        return None
+    return resp.json()
+
+
+def resolve_puuid_to_riot_id(puuid):
+    """Convert PUUID to Riot ID (Name#Tag). Returns None on failure."""
+    url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-puuid/{puuid}"
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    game_name = data.get("gameName")
+    tag_line = data.get("tagLine")
+    if not game_name or not tag_line:
+        return None
+    return f"{game_name}#{tag_line}"
+
+
 def get_item_data():
     version = requests.get("https://ddragon.leagueoflegends.com/api/versions.json").json()[0]
     url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json"

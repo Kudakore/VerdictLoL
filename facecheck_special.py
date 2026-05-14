@@ -14,7 +14,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from facecheck_data import get_ranked_games, get_current_rank_string
 from facecheck_display import ROLE_LABELS, enemy_role_label, print_full_game
-from facecheck_aggregate import synthesize_games, mine_observations, worst_patterns, best_patterns, compare_players, _winrate, _split_by_result
+from facecheck_aggregate import synthesize_games, synthesize_games_with_engines, mine_observations, worst_patterns, best_patterns, compare_players, _winrate, _split_by_result
 
 # Champion Intelligence — optional, graceful fallback
 try:
@@ -1092,3 +1092,147 @@ def print_recent(games, queue_filter=None, count=20, cache=None):
         print(f"  By champ: {champ_line}")
 
     print()
+
+
+# ─────────────────────────────────────────────
+# ENEMY — Live Enemy Scout
+# ─────────────────────────────────────────────
+
+SPECTATOR_ROLES = {
+    "TOP": "TOP", "JUNGLE": "JUNGLE", "MIDDLE": "MID",
+    "BOTTOM": "BOT", "UTILITY": "SUPPORT",
+    "TOP_lane": "TOP", "JUNGLE_lane": "JUNGLE", "MID_lane": "MID",
+    "BOT_lane": "BOT", "SUPPORT_lane": "SUPPORT",
+}
+
+
+def print_enemy(games, player_id, riot_id, champion=None, role=None, my_games=None, my_player_id=None):
+    """
+    Compact enemy scouting report.
+    Shows role versatility, key loss observations, and a bottom line.
+    """
+    if not games or len(games) < 3:
+        print(f"\n  Not enough data for {riot_id} (need 3+ ranked games).\n")
+        return
+
+    total = len(games)
+    wins = sum(1 for g in games if g.get("win"))
+    wr = _winrate(games)
+
+    # Rank display
+    rank_str = ""
+    # Try to get rank from the most recent game's data if available
+    # (rank info isn't in game records — we'd need a separate API call)
+    # For now, omit rank unless provided externally
+
+    # ── Role versatility ──
+    role_counts = defaultdict(lambda: {"w": 0, "l": 0})
+    for g in games:
+        r = g.get("role", "?")
+        if g.get("win"):
+            role_counts[r]["w"] += 1
+        else:
+            role_counts[r]["l"] += 1
+
+    # Sort roles by total games
+    roles_sorted = sorted(role_counts.items(), key=lambda x: x[1]["w"] + x[1]["l"], reverse=True)
+    primary_role, primary_stats = roles_sorted[0]
+    primary_total = primary_stats["w"] + primary_stats["l"]
+    primary_wr = primary_stats["w"] / primary_total * 100 if primary_total else 0
+
+    # Build role display
+    if primary_total / total >= 0.7:
+        role_line = f"{primary_role} main ({primary_total}/{total} games)"
+    else:
+        role_parts = []
+        for r, s in roles_sorted[:3]:
+            role_parts.append(f"{r} {s['w']}/{s['w']+s['l']}")
+        role_line = ", ".join(role_parts)
+
+    # Best role WR
+    best_role = max(roles_sorted, key=lambda x: x[1]["w"] / max(x[1]["w"] + x[1]["l"], 1))
+    best_total = best_role[1]["w"] + best_role[1]["l"]
+    best_wr = best_role[1]["w"] / best_total * 100 if best_total else 0
+
+    role_wr_line = ""
+    if best_role[0] != primary_role or best_total != primary_total:
+        role_wr_line = f" | Best: {best_role[0]} {best_wr:.0f}% WR"
+    elif len(roles_sorted) > 1:
+        # Show overall WR for context since they're multi-role
+        role_wr_line = f" | Overall: {wr}% WR"
+
+    # ── Header ──
+    champ_str = f" vs {champion}" if champion else ""
+    role_str = f" ({role})" if role else ""
+    print(f"\n  {'='*58}")
+    print(f"  FACECHECK ENEMY{champ_str}{role_str}")
+    print(f"  {'='*58}")
+    print(f"  {riot_id} | {total} games | {wr}% WR")
+    print(f"  Role: {role_line}{role_wr_line}")
+    print(f"  {'='*58}\n")
+
+    # ── Observations (losses = their weaknesses) ──
+    pairs, engines = synthesize_games_with_engines(games, player_id)
+    if pairs:
+        loss_pairs = [(g, v) for g, v in pairs if not g.get("win", False)]
+        loss_obs = mine_observations(loss_pairs, result_filter="loss") if loss_pairs else []
+
+        if loss_obs:
+            print(f"  ── WEAKNESSES ──────────────────────────────────────────────")
+            for obs in loss_obs[:3]:
+                label = obs.get("label", obs.get("obs_type", "?")).title()
+                pct = obs.get("pct", 0)
+                count = obs.get("count", 0)
+                total_losses = sum(1 for g, v in loss_pairs)
+                statement = obs.get("statement", "")
+                if statement:
+                    print(f"  → {label}: {pct:.0f}% of losses ({count}/{total_losses})")
+                    print(f"    {statement}")
+                else:
+                    print(f"  → {label}: {pct:.0f}% of losses ({count}/{total_losses})")
+            print()
+
+    # ── Key stats comparison (if my_games provided) ──
+    if my_games and len(my_games) >= 5:
+        my_deaths = sum(g.get("deaths", 0) for g in my_games) / len(my_games)
+        their_deaths = sum(g.get("deaths", 0) for g in games) / len(games)
+        my_cs = sum(g.get("cs_per_min", 0) or 0 for g in my_games) / len(my_games)
+        their_cs = sum(g.get("cs_per_min", 0) or 0 for g in games) / len(games)
+        my_dpm = sum(g.get("damage_per_min", 0) or 0 for g in my_games) / len(my_games)
+        their_dpm = sum(g.get("damage_per_min", 0) or 0 for g in games) / len(games)
+
+        print(f"  ── YOUR EDGE ───────────────────────────────────────────────")
+        if my_deaths != their_deaths:
+            delta = "fewer" if my_deaths < their_deaths else "more"
+            print(f"  Deaths/game: You {my_deaths:.1f} vs Them {their_deaths:.1f} ({abs(my_deaths - their_deaths):.1f} {delta})")
+        if my_cs != their_cs:
+            delta = "more" if my_cs > their_cs else "less"
+            print(f"  CS/min: You {my_cs:.1f} vs Them {their_cs:.1f} ({abs(my_cs - their_cs):.1f} {delta})")
+        if abs(my_dpm - their_dpm) > 50:
+            delta = "more" if my_dpm > their_dpm else "less"
+            print(f"  DPM: You {my_dpm:.0f} vs Them {their_dpm:.0f} ({abs(my_dpm - their_dpm):.0f} {delta})")
+        print()
+
+    # ── Bottom line ──
+    if pairs and loss_pairs:
+        loss_obs = mine_observations(loss_pairs, result_filter="loss")
+        if loss_obs:
+            top = loss_obs[0]
+            obs_type = top.get("obs_type", "")
+            label = top.get("label", obs_type).title()
+            pct = top.get("pct", 0)
+            print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+            print(f"  Their biggest weakness: {label} ({pct:.0f}% of losses).")
+            # Simple actionable advice based on top observation type
+            action_map = {
+                "death_cluster": "Punish early deaths — they spiral.",
+                "early_deaths": "Invade early — they die before 15 min.",
+                "inefficient_combat": "They take bad fights. Punish their aggression.",
+                "poor_farming": "Out-farm them — they fall behind in gold.",
+                "counter_pick": "They struggle into your pick. Play confident.",
+                "low_vision": "They have poor vision. Gank freely.",
+                "poor_objective_control": "They neglect objectives. Take dragons/herald early.",
+            }
+            advice = action_map.get(obs_type, "Exploit this pattern to win.")
+            print(f"  {advice}")
+            print()
