@@ -725,6 +725,12 @@ def fetch_and_cache(count=50, force=False):
         save_cache(cache)
         return cache
 
+    # When force-refreshing, build a lookup of existing records by match_id
+    # so we can replace old records with freshly-fetched ones
+    existing_by_id = {}
+    if force:
+        existing_by_id = {g["match_id"]: i for i, g in enumerate(cache.get("games", []))}
+
     print(f"Fetching {len(new_ids)} new games (rate limited ~1.5s/call)...")
     estimated = len(new_ids) * 2 * 1.5
     print(f"Estimated time: ~{round(estimated / 60, 1)} minutes\n")
@@ -743,7 +749,18 @@ def fetch_and_cache(count=50, force=False):
             print(f"  Error on {match_id}: {e}")
             continue
 
-    cache["games"] = new_records + cache.get("games", [])
+    if force:
+        # Remove old copies of re-fetched games, then prepend new ones
+        old_games = cache.get("games", [])
+        replaced_ids = {r["match_id"] for r in new_records}
+        remaining = [g for g in old_games if g["match_id"] not in replaced_ids]
+        cache["games"] = new_records + remaining
+        removed = len(old_games) - len(remaining)
+        if removed:
+            print(f"  Replaced {removed} existing records with fresh data.")
+    else:
+        cache["games"] = new_records + cache.get("games", [])
+
     cache["cached_ids"] = list(cached_ids)
     cache["last_updated"] = datetime.now().isoformat()
     save_cache(cache)
