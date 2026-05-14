@@ -98,6 +98,8 @@
 
 **`face fetch` is broken** — the fetch command does not work. Not investigated yet. May be API key, rate limiting, or code issue. Needs debugging before scout/compare can be fully tested with live data.
 
+**Git remote URL was case-mismatched** — local remote pointed to `facecheck.git` (lowercase f) but GitHub renamed the repo to `Facecheck.git` (uppercase F). Every push triggered a redirect warning. Fixed with `git remote set-url origin https://github.com/Kudakore/Facecheck.git`.
+
 ---
 
 ## Key Learnings
