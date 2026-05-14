@@ -94,6 +94,12 @@
 
 ---
 
+## Known Issue
+
+**`face fetch` is broken** — the fetch command does not work. Not investigated yet. May be API key, rate limiting, or code issue. Needs debugging before scout/compare can be fully tested with live data.
+
+---
+
 ## Key Learnings
 
 ### Observation mining is additive, not exclusive
