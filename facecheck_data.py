@@ -559,6 +559,101 @@ def get_ranked_games(cache, champion=None, count=None):
         games = games[:count]
     return games
 
+
+def resolve_riot_id(riot_id):
+    """Resolve a Riot ID (Name#Tag) to (puuid, player_id) tuple. Returns (None, None) on failure."""
+    if "#" not in riot_id:
+        return None, None
+    game_name, tag_line = riot_id.split("#", 1)
+    url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
+    resp = rate_limited_get(url).json()
+    if "puuid" not in resp:
+        return None, None
+    puuid = resp["puuid"]
+    player_id = f"{game_name}#{tag_line}"
+    return puuid, player_id
+
+
+def fetch_player_games(riot_id, count=20):
+    """
+    Fetch any player's ranked games with full timeline data.
+    Returns (games, player_id) tuple, or (None, None) on failure.
+    Caches per-player in scout_cache/{safe_id}_cache.json.
+    """
+    puuid, player_id = resolve_riot_id(riot_id)
+    if not puuid:
+        print(f"Player not found: {riot_id}")
+        return None, None
+
+    # Per-player scout cache
+    safe_id = player_id.replace("#", "_").replace(" ", "_")
+    scout_dir = "C:\\Facecheck\\scout_cache"
+    os.makedirs(scout_dir, exist_ok=True)
+    scout_path = os.path.join(scout_dir, f"{safe_id}_cache.json")
+
+    # Load existing scout cache
+    if os.path.exists(scout_path):
+        with open(scout_path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    else:
+        cache = {"puuid": puuid, "player_id": player_id, "games": [], "cached_ids": [], "last_updated": None}
+
+    print(f"Scouting {player_id}...")
+
+    print("Fetching rank data...")
+    snapshot = get_rank_snapshot(puuid)
+    if snapshot:
+        for queue_name, data in snapshot["queues"].items():
+            tier = data["tier"].capitalize()
+            rank = data["rank"]
+            lp = data["lp"]
+            wins = data["wins"]
+            losses = data["losses"]
+            streak = " 🔥" if data.get("hot_streak") else ""
+            print(f"  {queue_name}: {tier} {rank} — {lp} LP — {wins}W {losses}L{streak}")
+
+    print("Fetching item data...")
+    item_names, components = get_item_data()
+
+    print(f"Fetching match IDs (up to {count})...")
+    match_ids = get_match_ids(puuid, count=count)
+
+    cached_ids = set(cache.get("cached_ids", []))
+    new_ids = [m for m in match_ids if m not in cached_ids]
+
+    if not new_ids:
+        print(f"Cache up to date. {len(cache['games'])} games loaded.")
+        return cache["games"][:count], player_id
+
+    print(f"Fetching {len(new_ids)} new games (rate limited ~1.5s/call)...")
+    estimated = len(new_ids) * 2 * 1.5
+    print(f"Estimated time: ~{round(estimated / 60, 1)} minutes\n")
+
+    new_records = []
+    for i, match_id in enumerate(new_ids, 1):
+        print(f"  [{i}/{len(new_ids)}] {match_id}...")
+        try:
+            match = get_match(match_id)
+            timeline = get_timeline(match_id)
+            record = build_match_record(match_id, match, timeline, puuid, item_names, components)
+            if record:
+                new_records.append(record)
+                cached_ids.add(match_id)
+        except Exception as e:
+            print(f"  Error on {match_id}: {e}")
+            continue
+
+    cache["games"] = new_records + cache.get("games", [])
+    cache["cached_ids"] = list(cached_ids)
+    cache["last_updated"] = datetime.now().isoformat()
+
+    with open(scout_path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=2)
+
+    print(f"\nCache updated. {len(cache['games'])} total games for {player_id}.")
+    return cache["games"][:count], player_id
+
+
 # ─────────────────────────────────────────────
 # MAIN FETCH
 # ─────────────────────────────────────────────

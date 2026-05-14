@@ -14,6 +14,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from facecheck_data import get_ranked_games
 from facecheck_display import ROLE_LABELS, enemy_role_label, print_full_game
+from facecheck_aggregate import synthesize_games, mine_observations, worst_patterns, best_patterns, compare_players, _winrate, _split_by_result
 
 # Champion Intelligence — optional, graceful fallback
 try:
@@ -814,6 +815,162 @@ def print_pathing(games):
     if avg_cs_15 >= 80:
         print(f"  • Strong farm efficiency. Maintain while adding gank pressure.")
 
-    print(f"  • Compare your clear to pro junglers with 'face scout [pro]#TAG'")
     print(f"\n  {'='*70}")
+    print()
+
+
+# ─────────────────────────────────────────────
+# SCOUT
+# ─────────────────────────────────────────────
+
+def print_scout(games, player_id, riot_id):
+    """
+    Display scout analysis for an arbitrary player.
+    Uses the full synthesis pipeline: observations, worst/best patterns, champion pool.
+    """
+    wins, losses = _split_by_result(games)
+    wr = _winrate(games) or 0
+
+    print(f"\n  {'='*60}")
+    print(f"  FACECHECK SCOUT — {riot_id}")
+    print(f"  {'='*60}")
+    print(f"  {len(games)} games  |  {len(wins)}W {len(losses)}L  |  {wr}% WR")
+    print(f"  {'='*60}\n")
+
+    # Champion pool
+    champ_games = defaultdict(list)
+    for g in games:
+        champ_games[g["champion"]].append(g)
+    champ_rows = []
+    for champ, cg in champ_games.items():
+        cwr = _winrate(cg)
+        if cwr is not None:
+            champ_rows.append((champ, len(cg), cwr))
+    champ_rows.sort(key=lambda x: (-x[1], -x[2]))
+    if champ_rows:
+        print(f"  ── CHAMPION POOL ─────────────────────────────────────────────")
+        print(f"  {'Champion':<16} {'Games':>6}  {'WR':>6}")
+        print(f"  {'─'*38}")
+        for champ, n, cwr in champ_rows[:8]:
+            print(f"  {champ:<16} {n:>6}  {cwr:>5}%")
+        print()
+
+    # Synthesis-powered analysis
+    if len(games) >= 3:
+        pairs = synthesize_games(games, player_id)
+        if pairs:
+            # Observation patterns (combined wins + losses)
+            all_patterns = mine_observations(pairs)
+            loss_patterns = mine_observations(pairs, result_filter="loss")
+            win_patterns = mine_observations(pairs, result_filter="win")
+
+            if loss_patterns:
+                print(f"  ── LOSS PATTERNS ────────────────────────────────────────────")
+                for pat in loss_patterns[:4]:
+                    print(f"  {pat['label'].title()}: {pat['count']} losses ({pat['pct']}%) — {pat['priority']}")
+                    for stmt in pat["statements"][:2]:
+                        print(f"    → {stmt}")
+                print()
+
+            if win_patterns:
+                print(f"  ── WIN PATTERNS ─────────────────────────────────────────────")
+                for pat in win_patterns[:4]:
+                    print(f"  {pat['label'].title()}: {pat['count']} wins ({pat['pct']}%) — {pat['priority']}")
+                    for stmt in pat["statements"][:2]:
+                        print(f"    → {stmt}")
+                print()
+
+            # Worst/best items and champions
+            worst_data = worst_patterns(pairs)
+            best_data = best_patterns(pairs)
+
+            if worst_data["items"]:
+                print(f"  ── WORST BUILDS ─────────────────────────────────────────────")
+                for item_info in worst_data["items"][:3]:
+                    print(f"  {item_info['item']}: {item_info['wr']}% WR across {item_info['games']} games")
+                print()
+
+            if best_data["items"]:
+                print(f"  ── BEST BUILDS ─────────────────────────────────────────────")
+                for item_info in best_data["items"][:3]:
+                    print(f"  {item_info['item']}: {item_info['wr']}% WR across {item_info['games']} games")
+                print()
+
+            # Bottom line
+            if worst_data.get("bottom_line"):
+                print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+                for line in worst_data["bottom_line"].split("\n"):
+                    print(f"  {line}")
+                print()
+        else:
+            print(f"  Not enough data for synthesis analysis (need 3+ games with verdicts).\n")
+    else:
+        print(f"  Not enough games for pattern analysis (need 3+, have {len(games)}).\n")
+
+    # Recent games
+    print(f"  ── RECENT GAMES ─────────────────────────────────────────────")
+    print(f"  {'#':>3}  {'Champion':<14}  {'Result':>6}  {'KDA':>8}  {'CS/min':>7}  {'DPM':>5}")
+    print(f"  {'─'*54}")
+    for i, g in enumerate(games[:10], 1):
+        result = "WIN" if g.get("win") else "LOSS"
+        kda = f"{g.get('kills',0)}/{g.get('deaths',0)}/{g.get('assists',0)}"
+        cs_min = g.get("cs_per_min", 0)
+        dpm = g.get("damage_per_min", 0)
+        print(f"  {i:>3}  {g.get('champion','?'):<14}  {result:>6}  {kda:>8}  {cs_min:>7.1f}  {dpm:>5.0f}")
+    print()
+
+
+# ─────────────────────────────────────────────
+# COMPARE
+# ─────────────────────────────────────────────
+
+def print_compare(my_games, my_pairs, my_engines, ref_games, ref_pairs, ref_engines, my_id, ref_id):
+    """
+    Display delta comparison between your patterns and a reference player's.
+    Shows observation rate deltas and distribution deltas.
+    """
+    my_wr = _winrate(my_games) or 0
+    ref_wr = _winrate(ref_games) or 0
+
+    print(f"\n  {'='*60}")
+    print(f"  FACECHECK COMPARE")
+    print(f"  {'='*60}")
+    print(f"  You: {len(my_games)} games, {my_wr}% WR")
+    print(f"  Them: {len(ref_games)} games, {ref_wr}% WR")
+    print(f"  {'='*60}\n")
+
+    data = compare_players(my_pairs, ref_pairs, my_engines, ref_engines, my_games, ref_games)
+
+    # Observation deltas
+    if data["observation_deltas"]:
+        print(f"  ── PATTERN DELTAS ───────────────────────────────────────────")
+        for d in data["observation_deltas"][:6]:
+            delta_sign = "+" if d["delta_pp"] > 0 else ""
+            print(f"  {d['label'].title()}: You {d['my_pct']}% vs Them {d['ref_pct']}% ({delta_sign}{d['delta_pp']}pp)")
+            if abs(d["delta_pp"]) >= 10:
+                if d["delta_pp"] > 0:
+                    print(f"    → You have this pattern significantly more often.")
+                else:
+                    print(f"    → They have this pattern significantly more often.")
+            elif abs(d["delta_pp"]) < 5:
+                print(f"    → Similar rate — not a key differentiator.")
+        print()
+
+    # Distribution deltas
+    if data["distribution_deltas"]:
+        print(f"  ── DISTRIBUTION DELTAS ─────────────────────────────────────")
+        for d in data["distribution_deltas"][:6]:
+            delta_sign = "+" if d["delta_median"] > 0 else ""
+            pct_str = f" ({d['delta_pct']:+.0f}%)" if d.get("delta_pct") else ""
+            print(f"  {d['label']}: You {d['my_median']:.1f} vs Them {d['ref_median']:.1f} ({delta_sign}{d['delta_median']:.1f}){pct_str}")
+            if abs(d.get("delta_pct", 0)) >= 25:
+                print(f"    → Large gap — this is a meaningful difference.")
+            elif abs(d.get("delta_pct", 0)) >= 10:
+                print(f"    → Moderate gap — worth noting.")
+        print()
+
+    # Bottom line
+    print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+    for line in data["bottom_line"].split("\n"):
+        print(f"  {line}")
     print()

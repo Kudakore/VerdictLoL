@@ -42,6 +42,217 @@ def _robust_avg(values: list) -> Optional[float]:
     return round(statistics.mean(values), 2)
 
 
+def mine_observations(pairs: List[Tuple[Dict, Verdict]], result_filter=None) -> List[Dict]:
+    """
+    Mine observations across verdicts for aggregate patterns.
+    result_filter: "loss" for worst, "win" for best, None for all.
+    Returns list of dicts: [{obs_type, label, count, pct, avg_score, wr, priority, statements}]
+    """
+    if result_filter == "loss":
+        pairs = [(g, v) for g, v in pairs if not g.get("win", False)]
+    elif result_filter == "win":
+        pairs = [(g, v) for g, v in pairs if g.get("win", False)]
+
+    obs_counts = defaultdict(list)
+    for g, v in pairs:
+        for obs in v.observations:
+            if obs.score < 0.5:
+                continue  # skip baseline fallbacks — not actionable patterns
+            obs_counts[obs.obs_type].append((g, obs))
+
+    total = len(pairs)
+    patterns = []
+    for obs_type, game_obs_list in obs_counts.items():
+        if len(game_obs_list) < 2:
+            continue
+        label = game_obs_list[0][1].label
+        priority = game_obs_list[0][1].priority
+        games = [g for g, _ in game_obs_list]
+        wins = sum(1 for g in games if g.get("win", False))
+        avg_score = sum(obs.score for _, obs in game_obs_list) / len(game_obs_list)
+        statements = list(dict.fromkeys(obs.statement for _, obs in game_obs_list))[:3]
+
+        patterns.append({
+            "obs_type": obs_type,
+            "label": label,
+            "count": len(game_obs_list),
+            "pct": round(len(game_obs_list) / total * 100, 1) if total > 0 else 0,
+            "avg_score": round(avg_score, 2),
+            "wr": round(wins / len(game_obs_list) * 100, 1),
+            "priority": priority,
+            "statements": statements,
+        })
+
+    patterns.sort(key=lambda x: x["count"], reverse=True)
+    return patterns
+
+
+def _compute_observation_deltas(my_pairs, ref_pairs):
+    """Compare observation rates between two players. Sorted by biggest absolute delta."""
+    my_obs = mine_observations(my_pairs)
+    ref_obs = mine_observations(ref_pairs)
+
+    all_types = set(o["obs_type"] for o in my_obs) | set(o["obs_type"] for o in ref_obs)
+    deltas = []
+    for obs_type in all_types:
+        my_match = next((o for o in my_obs if o["obs_type"] == obs_type), None)
+        ref_match = next((o for o in ref_obs if o["obs_type"] == obs_type), None)
+        my_pct = my_match["pct"] if my_match else 0
+        ref_pct = ref_match["pct"] if ref_match else 0
+        deltas.append({
+            "obs_type": obs_type,
+            "label": (my_match or ref_match)["label"],
+            "priority": (my_match or ref_match)["priority"],
+            "my_pct": my_pct,
+            "ref_pct": ref_pct,
+            "delta_pp": round(my_pct - ref_pct, 1),
+            "my_count": my_match["count"] if my_match else 0,
+            "ref_count": ref_match["count"] if ref_match else 0,
+        })
+    deltas.sort(key=lambda x: abs(x["delta_pp"]), reverse=True)
+    return deltas
+
+
+def _compute_distribution_deltas(my_engines, ref_engines):
+    """Compare distribution stats between two players' engine outputs."""
+    deltas = []
+    dist_pairs = [
+        ("deaths_per_game", "death", "Deaths/game"),
+        ("damage_per_min", "combat", "DPM"),
+        ("kill_participation", "combat", "Kill participation"),
+        ("total_heal", "durability", "Healing"),
+        ("damage_mitigated", "durability", "Mitigation"),
+        ("cc_time", "durability", "CC time"),
+        ("wards_killed", "vision", "Wards killed"),
+    ]
+    for dist_key, engine_attr, label in dist_pairs:
+        my_output = getattr(my_engines, engine_attr)
+        ref_output = getattr(ref_engines, engine_attr)
+        if not my_output or not ref_output:
+            continue
+        my_dist = my_output.distributions.get(dist_key)
+        ref_dist = ref_output.distributions.get(dist_key)
+        if not my_dist or not ref_dist:
+            continue
+        deltas.append({
+            "label": label,
+            "my_median": my_dist.median,
+            "ref_median": ref_dist.median,
+            "my_p25": my_dist.percentiles.get(25, my_dist.median * 0.75),
+            "ref_p25": ref_dist.percentiles.get(25, ref_dist.median * 0.75),
+            "my_p75": my_dist.percentiles.get(75, my_dist.median * 1.25),
+            "ref_p75": ref_dist.percentiles.get(75, ref_dist.median * 1.25),
+            "delta_median": round(my_dist.median - ref_dist.median, 1),
+            "delta_pct": round((my_dist.median / ref_dist.median - 1) * 100, 0) if ref_dist.median else 0,
+        })
+    return deltas
+
+
+def compare_players(my_pairs, ref_pairs, my_engines, ref_engines, my_games, ref_games):
+    """
+    Compare two players' patterns and distributions.
+    Returns dict with observation_deltas, distribution_deltas, bottom_line.
+    """
+    observation_deltas = _compute_observation_deltas(my_pairs, ref_pairs)
+    distribution_deltas = _compute_distribution_deltas(my_engines, ref_engines)
+
+    # Bottom line: top 2-3 most actionable deltas
+    bottom_lines = []
+    if observation_deltas:
+        top_obs = observation_deltas[0]
+        direction = "more" if top_obs["delta_pp"] > 0 else "less"
+        bottom_lines.append(
+            f"Biggest pattern gap: {top_obs['label'].lower()} "
+            f"(you {abs(top_obs['delta_pp']):.0f}pp {direction} than them)."
+        )
+    if distribution_deltas:
+        top_dist = distribution_deltas[0]
+        if top_dist["delta_pct"] >= 0:
+            bottom_lines.append(
+                f"Biggest stat gap: {top_dist['label']} — "
+                f"you average {top_dist['my_median']:.0f} vs their {top_dist['ref_median']:.0f} "
+                f"(+{top_dist['delta_pct']:.0f}%)."
+            )
+        else:
+            bottom_lines.append(
+                f"Biggest stat gap: {top_dist['label']} — "
+                f"you average {top_dist['my_median']:.0f} vs their {top_dist['ref_median']:.0f} "
+                f"({top_dist['delta_pct']:.0f}%)."
+            )
+    if len(observation_deltas) > 1:
+        second = observation_deltas[1]
+        if abs(second["delta_pp"]) >= 5:
+            direction = "more" if second["delta_pp"] > 0 else "less"
+            bottom_lines.append(
+                f"Also notable: {second['label'].lower()} "
+                f"({abs(second['delta_pp']):.0f}pp {direction})."
+            )
+
+    return {
+        "observation_deltas": observation_deltas,
+        "distribution_deltas": distribution_deltas,
+        "bottom_line": "\n".join(bottom_lines) if bottom_lines else "No significant differences found.",
+    }
+
+
+def synthesize_games_with_engines(games: List[Dict], player_id: str):
+    """
+    Run full synthesis pipeline, returning (pairs, engines).
+    Useful for compare mode which needs both verdicts and engine outputs.
+    """
+    if len(games) < 3:
+        return [], None
+
+    # Load or compute engine outputs
+    engines = load_engine_outputs(player_id, games)
+    if engines is None:
+        death_output = run_death_engine(games=games, player_id=player_id)
+        economy_output = run_economy_engine(games=games, player_id=player_id)
+        combat_output = run_combat_engine(games=games, player_id=player_id)
+        durability_output = run_durability_engine(games=games, player_id=player_id)
+        vision_output = run_vision_engine(games=games, player_id=player_id)
+        objective_output = run_objective_engine(games=games, player_id=player_id)
+        draft_output = run_draft_engine(games=games, player_id=player_id)
+        engines = MultiEngineOutput(
+            death=death_output, economy=economy_output, combat=combat_output,
+            durability=durability_output, vision=vision_output,
+            objective=objective_output, draft=draft_output,
+        )
+        save_engine_outputs(player_id, games, engines)
+
+    # Build player model + similarity
+    player_model = get_or_create_player_model(player_id, games)
+    similarity_output = None
+    cluster_membership = {}
+    try:
+        sim_engine = SimilarityEngine()
+        sim_result = sim_engine.analyze(games)
+        if sim_result and sim_result.fingerprints:
+            similarity_output = sim_result
+            cluster_result = sim_engine.cluster()
+            if cluster_result and cluster_result.clusters:
+                for cluster in cluster_result.clusters:
+                    for fp in cluster.games:
+                        cluster_membership[fp.match_id] = cluster.cluster_id
+            try:
+                sim_engine.discover_patterns()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Synthesize each game
+    synthesis = SynthesisLayer(player_model, similarity_output=similarity_output,
+                               cluster_membership=cluster_membership)
+    results = []
+    for game in games:
+        verdict = synthesis.analyze_single_game(game, engines)
+        if verdict:
+            results.append((game, verdict))
+
+    return results, engines
+
+
 def synthesize_games(games: List[Dict], player_id: str) -> List[Tuple[Dict, Verdict]]:
     """
     Run full synthesis pipeline on all games.
@@ -105,37 +316,17 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     """
     Mine verdicts from losses for common patterns.
     Returns structured data for display:
-      - mechanisms: [{mechanism, count, pct, lessons, evidence}]
+      - observation_patterns: [{obs_type, label, count, pct, avg_score, wr, priority, statements}]
       - items: [{item, wr, games}] worst first-item builds
       - champions: [{champion, wr, games}] worst champions
       - bottom_line: str summary
     """
     losses = [(g, v) for g, v in pairs if not g.get("win", False)]
     if not losses:
-        return {"mechanisms": [], "items": [], "champions": [], "bottom_line": "No losses to analyze."}
+        return {"observation_patterns": [], "items": [], "champions": [], "bottom_line": "No losses to analyze."}
 
-    # Group loss verdicts by mechanism
-    mech_counts = defaultdict(list)
-    for g, v in losses:
-        mechanism = v.mechanism or "unspecified"
-        mech_counts[mechanism].append((g, v))
-
-    mechanisms = []
-    for mech, mv in sorted(mech_counts.items(), key=lambda x: -len(x[1])):
-        lessons = set()
-        evidence_keywords = set()
-        for g, v in mv:
-            for lesson in v.lessons:
-                lessons.add(lesson.text)
-            for ev in v.primary_evidence:
-                evidence_keywords.add(ev.description)
-        mechanisms.append({
-            "mechanism": mech,
-            "count": len(mv),
-            "pct": round(len(mv) / len(losses) * 100, 1),
-            "lessons": list(lessons)[:3],
-            "evidence": list(evidence_keywords)[:2],
-        })
+    # Mine observation patterns from loss verdicts
+    observation_patterns = mine_observations(pairs, result_filter="loss")
 
     # Worst first items (only from losses)
     item_games = defaultdict(list)
@@ -181,9 +372,10 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     if champions:
         worst_champ = champions[0]
         bottom_lines.append(f"Champion: {worst_champ['champion']} at {worst_champ['wr']}% WR across {worst_champ['games']} games. The data does not support this pick.")
-    if mechanisms:
-        top_mech = mechanisms[0]
-        bottom_lines.append(f"Primary issue: {top_mech['mechanism']} ({top_mech['pct']}% of losses). {top_mech['lessons'][0] if top_mech['lessons'] else 'Address this before anything else.'}")
+    if observation_patterns:
+        top = observation_patterns[0]
+        stmt = top['statements'][0] if top['statements'] else 'Address this first.'
+        bottom_lines.append(f"Primary pattern: {top['label']} ({top['pct']}% of losses). {stmt}")
     if not bottom_lines:
         total_losses = len(losses)
         total_games = len(pairs)
@@ -191,7 +383,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
         bottom_lines.append(f"No dominant weakness found at {wr}% WR. Focus on consistency — the small edges compound.")
 
     return {
-        "mechanisms": mechanisms,
+        "observation_patterns": observation_patterns,
         "items": items,
         "champions": champions,
         "bottom_line": "\n".join(bottom_lines),
@@ -202,37 +394,17 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     """
     Mine verdicts from wins for common patterns.
     Returns structured data for display:
-      - mechanisms: [{mechanism, count, pct, lessons, evidence}]
+      - observation_patterns: [{obs_type, label, count, pct, avg_score, wr, priority, statements}]
       - items: [{item, wr, games}] best first-item builds
       - champions: [{champion, wr, games}] best champions
       - bottom_line: str summary
     """
     wins = [(g, v) for g, v in pairs if g.get("win", False)]
     if not wins:
-        return {"mechanisms": [], "items": [], "champions": [], "bottom_line": "No wins to analyze."}
+        return {"observation_patterns": [], "items": [], "champions": [], "bottom_line": "No wins to analyze."}
 
-    # Group win verdicts by mechanism
-    mech_counts = defaultdict(list)
-    for g, v in wins:
-        mechanism = v.mechanism or "unspecified"
-        mech_counts[mechanism].append((g, v))
-
-    mechanisms = []
-    for mech, mv in sorted(mech_counts.items(), key=lambda x: -len(x[1])):
-        lessons = set()
-        evidence_keywords = set()
-        for g, v in mv:
-            for lesson in v.lessons:
-                lessons.add(lesson.text)
-            for ev in v.primary_evidence:
-                evidence_keywords.add(ev.description)
-        mechanisms.append({
-            "mechanism": mech,
-            "count": len(mv),
-            "pct": round(len(mv) / len(wins) * 100, 1),
-            "lessons": list(lessons)[:3],
-            "evidence": list(evidence_keywords)[:2],
-        })
+    # Mine observation patterns from win verdicts
+    observation_patterns = mine_observations(pairs, result_filter="win")
 
     # Best items
     all_games = [g for g, v in pairs]
@@ -271,15 +443,16 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     if champions:
         best_champ = champions[0]
         bottom_lines.append(f"Champion: {best_champ['champion']} at {best_champ['wr']}% WR. When you want to climb, play this.")
-    if mechanisms:
-        top_mech = mechanisms[0]
-        bottom_lines.append(f"Win pattern: {top_mech['mechanism']} ({top_mech['pct']}% of wins). {top_mech['lessons'][0] if top_mech['lessons'] else 'Keep building on this.'}")
+    if observation_patterns:
+        top = observation_patterns[0]
+        stmt = top['statements'][0] if top['statements'] else 'Keep building on this.'
+        bottom_lines.append(f"Win pattern: {top['label']} ({top['pct']}% of wins). {stmt}")
     if not bottom_lines:
         wr = _winrate(all_games)
         bottom_lines.append(f"Consistent performance at {wr}% WR. No single dominant pattern — keep playing your game.")
 
     return {
-        "mechanisms": mechanisms,
+        "observation_patterns": observation_patterns,
         "items": items,
         "champions": champions,
         "bottom_line": "\n".join(bottom_lines),
@@ -411,12 +584,12 @@ def print_worst(games, champion=None, player_id=None):
                 print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games. The data does not support this pick.")
             print()
 
-        if data["mechanisms"]:
+        if data["observation_patterns"]:
             print(f"  ── YOUR WORST PATTERNS ──────────────────────────────────────")
-            for mech in data["mechanisms"][:6]:
-                print(f"  {mech['mechanism'].replace('_', ' ').title()}: {mech['pct']}% of losses ({mech['count']} games)")
-                if mech["lessons"]:
-                    print(f"    → {mech['lessons'][0]}")
+            for pat in data["observation_patterns"][:6]:
+                print(f"  {pat['label'].title()}: {pat['count']} losses ({pat['pct']}%) — {pat['priority']}")
+                for stmt in pat["statements"][:2]:
+                    print(f"    → {stmt}")
             print()
 
         print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
@@ -456,12 +629,12 @@ def print_best(games, champion=None, player_id=None):
                 print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games. This champion works for you.")
             print()
 
-        if data["mechanisms"]:
+        if data["observation_patterns"]:
             print(f"  ── WHAT YOUR WINNING GAMES HAVE IN COMMON ───────────────────")
-            for mech in data["mechanisms"][:5]:
-                print(f"  {mech['mechanism'].replace('_', ' ').title()}: {mech['pct']}% of wins ({mech['count']} games)")
-                if mech["lessons"]:
-                    print(f"    → {mech['lessons'][0]}")
+            for pat in data["observation_patterns"][:5]:
+                print(f"  {pat['label'].title()}: {pat['count']} wins ({pat['pct']}%) — {pat['priority']}")
+                for stmt in pat["statements"][:2]:
+                    print(f"    → {stmt}")
             print()
 
         print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
@@ -472,7 +645,7 @@ def print_best(games, champion=None, player_id=None):
     print()
 
 
-def print_pool(games, min_games=3):
+def print_pool(games, min_games=3, player_id=None):
     champ_games = defaultdict(list)
     for g in games:
         champ_games[g["champion"]].append(g)
@@ -534,6 +707,46 @@ def print_pool(games, min_games=3):
     print(f"  {'─'*58}")
     for champ, n, wr, trend, verdict in rows:
         print(f"  {champ:<20} {n:>6}  {wr:>5}%  {trend:>6}  {verdict}")
+
+    # Per-champion observation enrichment
+    if player_id and len(games) >= 3:
+        pairs = synthesize_games(games, player_id)
+        if pairs:
+            champ_verdicts = defaultdict(list)
+            for g, v in pairs:
+                champ_verdicts[g["champion"]].append((g, v))
+
+            obs_lines = []
+            champ_lookup = {r[0]: r for r in rows}
+            for champ, n, wr, trend, verdict_label in rows:
+                if champ not in champ_verdicts or len(champ_verdicts[champ]) < 3:
+                    continue
+                cv = champ_verdicts[champ]
+                losses = [(g, v) for g, v in cv if not g.get("win", False)]
+                wins_list = [(g, v) for g, v in cv if g.get("win", False)]
+
+                if wr < 50 and losses:
+                    obs_counts = defaultdict(int)
+                    for _, v in losses:
+                        if v.observations:
+                            obs_counts[v.observations[0].label] += 1
+                    if obs_counts:
+                        top_obs = max(obs_counts.items(), key=lambda x: x[1])
+                        obs_lines.append((champ, f"loss pattern: {top_obs[0]} ({top_obs[1]}/{len(losses)} losses)"))
+                elif wr >= 50 and wins_list:
+                    obs_counts = defaultdict(int)
+                    for _, v in wins_list:
+                        if v.observations:
+                            obs_counts[v.observations[0].label] += 1
+                    if obs_counts:
+                        top_obs = max(obs_counts.items(), key=lambda x: x[1])
+                        obs_lines.append((champ, f"win pattern: {top_obs[0]} ({top_obs[1]}/{len(wins_list)} wins)"))
+
+            if obs_lines:
+                print()
+                print(f"  ── CHAMPION PATTERNS ───────────────────────────────────────")
+                for champ, line in obs_lines:
+                    print(f"  {champ}: {line}")
 
     print(f"\n  {'─'*58}")
     play_these = [r for r in rows if r[4] == "PLAY"]

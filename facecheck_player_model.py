@@ -13,6 +13,8 @@ import os
 import statistics
 from collections import defaultdict
 
+from config import MY_GAME_NAME, MY_TAG_LINE
+
 
 BRAIN_PATH = "C:\\Facecheck\\facecheck_brain.json"
 
@@ -385,16 +387,29 @@ class PlayerModel:
         return cls(player_id)
 
 
+def _player_model_path(player_id: str) -> str:
+    """Compute per-player model path. Self-analysis uses default BRAIN_PATH, scout players get their own."""
+    default_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
+    if player_id == default_id:
+        return BRAIN_PATH
+    safe_id = player_id.replace("#", "_").replace(" ", "_")
+    scout_dir = "C:\\Facecheck\\scout_cache"
+    os.makedirs(scout_dir, exist_ok=True)
+    return os.path.join(scout_dir, f"{safe_id}_brain.json")
+
+
 def get_or_create_player_model(player_id: str, games: List[Dict] = None) -> PlayerModel:
     """
     Load existing player model or create new one.
     If games provided, update the model with them.
+    Uses per-player paths for scout players.
     """
-    model = PlayerModel.load(player_id)
+    path = _player_model_path(player_id)
+    model = PlayerModel.load(player_id, path=path)
 
     if games:
         model.update_from_games(games)
-        model.save()
+        model.save(path=path)
 
     return model
 
