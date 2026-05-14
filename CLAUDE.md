@@ -21,7 +21,7 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `facecheck_engine_base.py` — Distribution, EngineNode, EngineSignature, EngineOutput (with to_dict/from_dict), run_engine_from_cache
 - `facecheck_engine_*.py` — 7 domain-pure extraction engines
 - `facecheck_engine_cache.py` — Engine output caching (save/load MultiEngineOutput JSON, keyed on player_id + games hash, 24h auto-invalidation)
-- `facecheck_synthesis.py` — SynthesisLayer, Verdict, MultiEngineOutput (with to_dict/from_dict), Evidence, Lesson
+- `facecheck_synthesis.py` — SynthesisLayer, Verdict, MultiEngineOutput (with to_dict/from_dict), Evidence, Lesson, Observation
 - `facecheck_similarity.py` — SimilarityEngine, GameFingerprint, ClusterResult, PatternResult
 - `facecheck_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory
 - `facecheck_data.py` — Riot API, cache management, match record building, get_ranked_games
@@ -42,13 +42,14 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - Matched comparison for counterfactual reasoning — not simple correlation
 - Superadditivity detection — only 2/31 signal pairs compound harm
 - Centroid delta for mechanism naming — not hardcoded thresholds
+- Observation pipeline — each verdict branch is an independent producer that returns Observation or None; all producers run, top observations compose the verdict statement
 
 ### Refactoring Plan (8 phases)
 - **Phase A** (DONE): Engine call interface refactored
 - **Phase B** (DONE): Engine output caching
 - **Phase C** (DONE): Kill legacy for aggregates
 - **Phase D** (DONE): Split facecheck_game.py into modules
-- **Phase E**: Compositional verdict rendering
+- **Phase E** (DONE): Compositional verdict rendering
 - **Phase F**: Aggregate synthesis for worst/best/pool
 - **Phase G**: Pro data adapter
 - **Phase H**: Personal vs pro comparison

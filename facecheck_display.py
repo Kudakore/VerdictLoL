@@ -13,6 +13,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from facecheck_data import get_current_rank_string
+from facecheck_synthesis import Observation
 
 # Synthesis Layer — 7 Domain-Pure Engines
 try:
@@ -250,6 +251,12 @@ def print_synthesis_block(verdict):
         print(f"\n  Matched Patterns ({len(verdict.matched_patterns)}):")
         for pid in verdict.matched_patterns[:3]:
             print(f"    • {pid.replace('_', ' ').title()}")
+
+    # Secondary observations (Phase E)
+    if verdict.observations and len(verdict.observations) > 1:
+        print(f"\n  Also detected:")
+        for obs in verdict.observations[1:4]:
+            print(f"    • {obs.label} ({obs.priority})")
 
 # ─────────────────────────────────────────────
 # FULL SINGLE GAME OUTPUT

@@ -72,6 +72,18 @@ class Lesson:
 
 
 @dataclass
+class Observation:
+    """A compositional narrative unit produced by an observation producer.
+    Multiple observations are collected, scored, and composed into a verdict."""
+    obs_type: str       # e.g. "death_cluster", "inefficient_combat"
+    label: str          # short label, e.g. "death cluster"
+    statement: str      # full sentence for this observation
+    score: float        # priority score (0.0–1.0), higher = more important
+    data: dict          # supporting data for rendering
+    priority: str       # "critical", "high", "medium", "low"
+
+
+@dataclass
 class Verdict:
     """A synthesis verdict about a game or pattern."""
     verdict_id: str
@@ -99,6 +111,9 @@ class Verdict:
     mechanism: str = ""                                      # Named mechanism of the loss/win
     pattern_insight: str = ""                               # Co-occurring pattern info (Phase 2)
 
+    # Compositional observations (Phase E)
+    observations: list = field(default_factory=list)  # List[Observation], scored and sorted
+
     # Drill-down (optional)
     drill_down_available: bool = False
     drill_down_prompt: str = ""
@@ -118,6 +133,191 @@ class SynthesisLayer:
         self.player_model = player_model
         self.similarity_output = similarity_output
         self.cluster_membership = cluster_membership or {}
+
+    # ─────────────────────────────────────────────
+    # OBSERVATION PRODUCERS (Phase E)
+    # ─────────────────────────────────────────────
+
+    def observe_death_cluster(self, game, signatures, baseline, engines):
+        """Death cluster: multiple deaths within a short window."""
+        win = game.get("win", False)
+        if win:
+            return None
+        death_clusters = self._get_signatures_by_type(signatures, "death_cluster")
+        death_chains = self._get_signatures_by_type(signatures, "death_chain")
+        if not death_clusters:
+            return None
+        cluster = death_clusters[0]
+        gap = cluster.features.get("gap_minutes", 0)
+        size = cluster.features.get("cluster_size", 2)
+        if death_chains:
+            return Observation(
+                obs_type="death_chain", label="death chain",
+                statement=f"Death chain: {size} deaths in {gap:.0f} minutes with accelerating frequency. Structural snowball.",
+                score=0.9, data={"cluster_size": size, "gap_minutes": gap},
+                priority="critical"
+            )
+        return Observation(
+            obs_type="death_cluster", label="death cluster",
+            statement=f"Death cluster: {size} deaths within {gap:.0f} minutes. Temporal concentration of deaths.",
+            score=0.85, data={"cluster_size": size, "gap_minutes": gap},
+            priority="critical"
+        )
+
+    def observe_death_chain(self, game, signatures, baseline, engines):
+        """Death chain: deaths with shrinking gaps (accelerating)."""
+        win = game.get("win", False)
+        if win:
+            return None
+        death_chains = self._get_signatures_by_type(signatures, "death_chain")
+        # Only fires if there wasn't also a death_cluster (which already covers chain)
+        death_clusters = self._get_signatures_by_type(signatures, "death_cluster")
+        if death_clusters:
+            return None  # observe_death_cluster handles this
+        if not death_chains:
+            return None
+        chain = death_chains[0]
+        length = chain.features.get("chain_length", 3)
+        return Observation(
+            obs_type="death_chain", label="death chain",
+            statement=f"Death chain: {length} deaths with shrinking gaps between them. Death rate accelerated over time.",
+            score=0.85, data={"chain_length": length},
+            priority="critical"
+        )
+
+    def observe_efficient_combat(self, game, signatures, baseline, engines):
+        """Win with low deaths and high damage — efficient carry."""
+        win = game.get("win", False)
+        if not win:
+            return None
+        combat = self._get_profile_features(signatures, "combat_profile")
+        deaths = combat.get("deaths", game.get("deaths", 0))
+        damage = combat.get("damage", game.get("damage", 0))
+        dpm = combat.get("dpm", game.get("damage_per_min", 0))
+        kp = combat.get("kp_pct", game.get("kp_pct", 0))
+        champion = game.get("champion", "Your champion")
+        if damage <= 0:
+            return None
+        death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
+        damage_dist = engines.combat.distributions.get("damage_per_min") if engines.combat else None
+        death_band = self._assess_against_distribution(deaths, death_dist) if death_dist else "unknown"
+        dpm_band = self._assess_against_distribution(dpm, damage_dist) if damage_dist else "unknown"
+        if death_band in ("bottom_25", "bottom_10") and dpm_band in ("top_25", "top_10"):
+            return Observation(
+                obs_type="efficient_combat", label="efficient combat",
+                statement=f"Efficient combat profile: {dpm:.0f} DPM, {kp:.0f}% KP, {deaths} deaths (bottom quartile). High impact with controlled risk.",
+                score=0.7, data={"dpm": dpm, "kp": kp, "deaths": deaths, "death_band": death_band, "dpm_band": dpm_band},
+                priority="high"
+            )
+        return Observation(
+            obs_type="win_baseline", label=f"{champion} win",
+            statement=f"{champion} win: {deaths} deaths, {dpm:.0f} DPM, {kp:.0f}% KP.",
+            score=0.4, data={"deaths": deaths, "dpm": dpm, "kp": kp},
+            priority="low"
+        )
+
+    def observe_inefficient_combat(self, game, signatures, baseline, engines):
+        """Loss with high deaths and low damage — inefficient combat."""
+        win = game.get("win", False)
+        if win:
+            return None
+        combat = self._get_profile_features(signatures, "combat_profile")
+        deaths = combat.get("deaths", game.get("deaths", 0))
+        damage = combat.get("damage", game.get("damage", 0))
+        champion = game.get("champion", "Your champion")
+        if deaths <= 0:
+            return None
+        death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
+        damage_dist = engines.combat.distributions.get("total_damage") if engines.combat else None
+        death_band = self._assess_against_distribution(deaths, death_dist) if death_dist else "unknown"
+        damage_band = self._assess_against_distribution(damage, damage_dist) if damage_dist else "unknown"
+        if death_band in ("top_25", "top_10") and damage_band in ("bottom_25", "bottom_10"):
+            return Observation(
+                obs_type="inefficient_combat", label="inefficient combat",
+                statement=f"Inefficient combat profile: {deaths} deaths (top quartile), {damage//1000}k damage (bottom quartile). Deaths outpaced output.",
+                score=0.75, data={"deaths": deaths, "damage": damage, "death_band": death_band, "damage_band": damage_band},
+                priority="high"
+            )
+        return Observation(
+            obs_type="loss_baseline", label=f"{champion} loss",
+            statement=f"{champion} loss: {deaths} deaths, {damage//1000}k damage.",
+            score=0.4, data={"deaths": deaths, "damage": damage},
+            priority="low"
+        )
+
+    def observe_champion_repetition(self, game, signatures, baseline, engines):
+        """Multiple games on same champion — familiarity structural factor."""
+        win = game.get("win", False)
+        if not win:
+            return None
+        champion = game.get("champion", "Your champion")
+        champ_repetition = self._get_signatures_by_type(signatures, "champion_repetition")
+        if not champ_repetition:
+            return None
+        streak = champ_repetition[0].features.get("games_on_champ", 3)
+        wr = champ_repetition[0].features.get("champ_wr", 0.5)
+        return Observation(
+            obs_type="champion_repetition", label="champion repetition",
+            statement=f"Champion repetition: {streak} games on {champion} ({wr:.0%} WR). Familiarity structural factor.",
+            score=0.6, data={"games_on_champ": streak, "champ_wr": wr},
+            priority="medium"
+        )
+
+    def observe_counter_pick(self, game, signatures, baseline, engines):
+        """Picked after enemy same-role but outcome was unfavorable."""
+        win = game.get("win", False)
+        if win:
+            return None
+        counter_relation = self._get_signatures_by_type(signatures, "counter_pick_relation")
+        if not counter_relation:
+            return None
+        return Observation(
+            obs_type="counter_pick", label="counter-pick position",
+            statement="Counter-pick position: picked after enemy same-role but outcome was unfavorable.",
+            score=0.55, data={},
+            priority="medium"
+        )
+
+    def observe_death_assessment(self, game, signatures, baseline, engines):
+        """Death count in extreme percentile bands."""
+        win = game.get("win", False)
+        death_assessment = baseline.get("deaths_per_game", "typical")
+        combat = self._get_profile_features(signatures, "combat_profile")
+        deaths = combat.get("deaths", game.get("deaths", 0))
+        if death_assessment == "critical" and not win:
+            return Observation(
+                obs_type="critical_deaths", label="critical death count",
+                statement=f"Death count ({deaths}) in bottom 10% of your history. Deaths accumulated across phases.",
+                score=0.65, data={"deaths": deaths, "assessment": death_assessment},
+                priority="high"
+            )
+        if death_assessment in ("excellent", "above_average") and win:
+            return Observation(
+                obs_type="excellent_survival", label="excellent survival",
+                statement=f"Death count ({deaths}) well below your typical. Controlled survival pattern.",
+                score=0.6, data={"deaths": deaths, "assessment": death_assessment},
+                priority="medium"
+            )
+        return None
+
+    OBSERVATION_PRODUCERS = [
+        observe_death_cluster,
+        observe_death_chain,
+        observe_efficient_combat,
+        observe_inefficient_combat,
+        observe_champion_repetition,
+        observe_counter_pick,
+        observe_death_assessment,
+    ]
+
+    def collect_observations(self, game, signatures, baseline, engines):
+        """Run all observation producers, collect and sort by score."""
+        observations = []
+        for producer in self.OBSERVATION_PRODUCERS:
+            obs = producer(self, game, signatures, baseline, engines)
+            if obs is not None:
+                observations.append(obs)
+        return sorted(observations, key=lambda o: o.score, reverse=True)
 
     # ── Reasoning Query API ──────────────────────────────────────
 
@@ -459,8 +659,16 @@ class SynthesisLayer:
                     similar_games = [r.match_id for r in similar]
                     break
 
-        # Build the verdict statement with multi-engine correlation
-        statement, confidence = self._build_fractal_statement(game, all_signatures, baseline_assessments, engines)
+        # Build the verdict statement with compositional observations
+        observations = self.collect_observations(game, all_signatures, baseline_assessments, engines)
+        if observations:
+            statement = observations[0].statement
+            confidence = observations[0].score
+        else:
+            result = "win" if game.get("win", False) else "loss"
+            champion = game.get("champion", "Your champion")
+            statement = f"{champion} {result}: No dominant structural patterns detected."
+            confidence = 0.5
 
         # Build supporting evidence
         evidence = self._build_evidence_multi(game, all_signatures, baseline_assessments, engines)
@@ -492,7 +700,8 @@ class SynthesisLayer:
             mechanism=mechanism,
             pattern_insight=pattern_insight,
             drill_down_available=True,
-            drill_down_prompt="Run 'face game <id> --deep' for full node analysis"
+            drill_down_prompt="Run 'face game <id> --deep' for full node analysis",
+            observations=observations
         )
 
     def _get_engine_signatures(self, engine_output: EngineOutput, match_id: str) -> List[EngineSignature]:
@@ -529,120 +738,6 @@ class SynthesisLayer:
         elif value >= p75:
             return "top_25"
         return "middle"
-
-    def _build_fractal_statement(self, game: Dict, signatures: List[EngineSignature],
-                                  assessments: Dict[str, str],
-                                  engines: MultiEngineOutput = None) -> Tuple[str, float]:
-        """Build the core verdict statement from engine outputs and player baselines."""
-        win = game.get("win", False)
-        champion = game.get("champion", "Your champion")
-        duration = game.get("duration_min", 30)
-
-        # Extract profiles from engine signatures
-        combat = self._get_profile_features(signatures, "combat_profile")
-        durability = self._get_profile_features(signatures, "durability_profile")
-        vision = self._get_profile_features(signatures, "vision_profile")
-
-        # Structural signature collections
-        death_clusters = self._get_signatures_by_type(signatures, "death_cluster")
-        death_chains = self._get_signatures_by_type(signatures, "death_chain")
-        death_phase_conc = self._get_signatures_by_type(signatures, "death_phase_concentration")
-        survival_profile = self._get_signatures_by_type(signatures, "survival_profile")
-
-        multi_kill = self._get_signatures_by_type(signatures, "multi_kill_event")
-        spree_event = self._get_signatures_by_type(signatures, "killing_spree_event")
-        bounty_event = self._get_signatures_by_type(signatures, "bounty_acquired")
-
-        champ_repetition = self._get_signatures_by_type(signatures, "champion_repetition")
-        counter_relation = self._get_signatures_by_type(signatures, "counter_pick_relation")
-        pick_position = self._get_signatures_by_type(signatures, "pick_position")
-        side_assignment = self._get_signatures_by_type(signatures, "side_assignment")
-
-        # Get distribution-based assessments
-        death_assessment = assessments.get("deaths_per_game", "typical")
-        deaths = combat.get("deaths", game.get("deaths", 0))
-        damage = combat.get("damage", game.get("damage", 0))
-        dpm = combat.get("dpm", game.get("damage_per_min", 0))
-        kp = combat.get("kp_pct", game.get("kp_pct", 0))
-
-        # ── Build statement with multi-engine correlation ──
-        # All branching uses distribution-derived percentile bands, NOT magic numbers.
-        # "low" means bottom_25, "high" means top_25 — relative to THIS player's distribution.
-
-        # Death cluster / chain (most salient structural pattern)
-        if death_clusters and not win:
-            cluster = death_clusters[0]
-            gap = cluster.features.get("gap_minutes", 0)
-            size = cluster.features.get("cluster_size", 2)
-            if death_chains:
-                statement = f"Death chain: {size} deaths in {gap:.0f} minutes with accelerating frequency. Structural snowball."
-                confidence = death_chains[0].confidence
-            else:
-                statement = f"Death cluster: {size} deaths within {gap:.0f} minutes. Temporal concentration of deaths."
-                confidence = cluster.confidence
-
-        elif death_chains and not win:
-            chain = death_chains[0]
-            length = chain.features.get("chain_length", 3)
-            statement = f"Death chain: {length} deaths with shrinking gaps between them. Death rate accelerated over time."
-            confidence = chain.confidence
-
-        # Efficient carry — deaths in bottom 25% AND damage in top 25%, win
-        elif win and damage > 0:
-            death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
-            damage_dist = engines.combat.distributions.get("damage_per_min") if engines.combat else None
-            death_band = self._assess_against_distribution(deaths, death_dist) if death_dist else "unknown"
-            dpm_band = self._assess_against_distribution(dpm, damage_dist) if damage_dist else "unknown"
-            if death_band in ("bottom_25", "bottom_10") and dpm_band in ("top_25", "top_10"):
-                statement = f"Efficient combat profile: {dpm:.0f} DPM, {kp:.0f}% KP, {deaths} deaths (bottom quartile). High impact with controlled risk."
-                confidence = 0.75
-            else:
-                # Default: structural observation with distribution context
-                result = "win"
-                statement = f"{champion} {result}: {deaths} deaths, {dpm:.0f} DPM, {kp:.0f}% KP."
-                confidence = 0.5
-
-        # High deaths + loss — deaths in top 25%, damage below personal average
-        elif not win and deaths > 0:
-            death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
-            damage_dist = engines.combat.distributions.get("total_damage") if engines.combat else None
-            death_band = self._assess_against_distribution(deaths, death_dist) if death_dist else "unknown"
-            damage_band = self._assess_against_distribution(damage, damage_dist) if damage_dist else "unknown"
-            if death_band in ("top_25", "top_10") and damage_band in ("bottom_25", "bottom_10"):
-                statement = f"Inefficient combat profile: {deaths} deaths (top quartile), {damage//1000}k damage (bottom quartile). Deaths outpaced output."
-                confidence = 0.75
-            else:
-                result = "loss"
-                statement = f"{champion} {result}: {deaths} deaths, {damage//1000}k damage."
-                confidence = 0.5
-
-        # Champion repetition + win
-        elif win and champ_repetition:
-            streak = champ_repetition[0].features.get("games_on_champ", 3)
-            wr = champ_repetition[0].features.get("champ_wr", 0.5)
-            statement = f"Champion repetition: {streak} games on {champion} ({wr:.0%} WR). Familiarity structural factor."
-            confidence = champ_repetition[0].confidence
-
-        # Counter-pick relation + not win
-        elif counter_relation and not win:
-            statement = f"Counter-pick position: picked after enemy same-role but outcome was unfavorable."
-            confidence = 0.6
-
-        # Death assessment from player model
-        elif death_assessment == "critical" and not win:
-            statement = f"Death count ({deaths}) in bottom 10% of your history. Deaths accumulated across phases."
-            confidence = 0.7
-        elif death_assessment in ["excellent", "above_average"] and win:
-            statement = f"Death count ({deaths}) well below your typical. Controlled survival pattern."
-            confidence = 0.75
-
-        # Default
-        else:
-            result = "win" if win else "loss"
-            statement = f"{champion} {result}: No dominant structural patterns detected."
-            confidence = 0.5
-
-        return statement, confidence
 
     def _match_player_patterns(self, game: Dict, assessments: Dict[str, str]) -> List[str]:
         """Match game to player model patterns."""
