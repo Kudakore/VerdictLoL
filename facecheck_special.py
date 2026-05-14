@@ -242,17 +242,17 @@ def print_matchups(games, champion=None):
 
             # Interpretation
             if cs > 0 and wr <= 40:
-                note = f"  You are farming ahead of {ec} but still losing. This is a fight problem, not a farm problem."
+                note = f"  You farm ahead of {ec} (+{cs:.0f} CS) but lose anyway — combat is the issue, not farm."
             elif cs < -20:
-                note = f"  {ec} is out-farming you consistently. The resource gap is the primary driver."
+                note = f"  {ec} out-farms you by {-cs:.0f} CS — the resource gap drives {100-wr:.0f}% of your losses."
             elif killed_by >= 1.5:
-                note = f"  {ec} is finding and killing you repeatedly. Pathing and positioning adjustment needed."
+                note = f"  {ec} kills you {killed_by:.1f}x per game — they're finding you in your jungle {killed_by:.1f}x/game."
             elif dmg < -3000:
-                note = f"  {ec} out-threatens you in combat. Every skirmish goes their way."
+                note = f"  {ec} outscales you in combat by {abs(dmg):,.0f} damage per game — avoid fighting without an advantage."
             elif early_d >= losses_n * 0.5:
-                note = f"  More than half your losses to {ec} involve early deaths. They are setting the tempo before 15 minutes."
+                note = f"  {early_d} of {losses_n} losses to {ec} involve early deaths — they dictate tempo before 15min."
             else:
-                note = f"  Losing record against {ec}. Review specific games with: facecheck select"
+                note = f"  Losing record against {ec}. Run: face select {ec}"
 
             print(f"  │  {note}")
             print(f"  └{'─'*63}")
@@ -287,13 +287,13 @@ def print_matchups(games, champion=None):
             print(f"  │  CS: {cs:+.0f}  |  Damage: {dmg:+,.0f}  |  Kills: {kills:+.1f}")
 
             if cs > 30 and dmg > 2000:
-                note = f"  You dominate {ec} in both farm and combat. This is your blueprint."
+                note = f"  +{cs:.0f} CS and +{dmg:,.0f} damage vs {ec} — strongest matchup in your pool."
             elif cs > 20:
-                note = f"  Farm advantage against {ec} is consistent. You control the resource race."
+                note = f"  +{cs:.0f} CS vs {ec} — resource advantage is consistent across {wins_n + losses_n} games."
             elif kills > 2:
-                note = f"  You win the individual duels against {ec}. Convert those kills into objectives."
+                note = f"  +{kills:.1f} kills vs {ec} per game — winning duels but need objectives to close."
             else:
-                note = f"  Winning record against {ec}. The matchup suits your style."
+                note = f"  {wr}% WR over {wins_n + losses_n} games vs {ec} — favorable matchup."
 
             print(f"  │  {note}")
             if INTEL_AVAILABLE:
@@ -658,17 +658,17 @@ def print_heatmap(games):
     print(f"  RECOMMENDATIONS")
     print(f"  {'─'*70}")
     if early_deaths / total_deaths > 0.4:
-        print(f"  • 40%+ of deaths are early. Focus on safer early game pathing.")
+        print(f"  • {early_deaths}/{total_deaths} deaths ({early_deaths/total_deaths:.0%}) are pre-15min — prioritize early survival.")
     elif late_deaths / total_deaths > 0.4:
-        print(f"  • 40%+ of deaths are late. Watch for overextension in late game.")
+        print(f"  • {late_deaths}/{total_deaths} deaths ({late_deaths/total_deaths:.0%}) are post-25min — avoid overextension in late game.")
     else:
-        print(f"  • Deaths are spread across phases. Review the peak minutes above.")
+        print(f"  • Deaths spread across phases — {total_deaths} deaths total, no single phase dominates.")
 
     if dangerous:
         first_danger = dangerous[0]
         start = first_danger[0]
         end = start + 4
-        print(f"  • Peak risk at {start}-{end} min: Play defensively during this window.")
+        print(f"  • Peak risk: {start}-{end} min ({len(dangerous)} concentrated death minutes).")
 
     print(f"\n  {'='*70}")
     print()
@@ -805,15 +805,13 @@ def print_pathing(games):
     print(f"  {'─'*70}")
 
     if avg_first_clear > 3.5:
-        print(f"  • Slow first clear: Practice your route in Practice Tool.")
-        print(f"  • Aim for 3:15 full clear. Check: kite camps efficiently.")
+        print(f"  • First clear averages {avg_first_clear:.1f} min — target 3:15 for full clear.")
 
     if avg_cs_15 < 70:
-        print(f"  • Low CS@15: Consider more farm-heavy pathing.")
-        print(f"  • Current meta: 6 CS/min minimum for junglers.")
+        print(f"  • CS@15 averages {avg_cs_15:.0f} — below 70 threshold. Farm more before ganking.")
 
     if avg_cs_15 >= 80:
-        print(f"  • Strong farm efficiency. Maintain while adding gank pressure.")
+        print(f"  • CS@15 averages {avg_cs_15:.0f} — strong farm. Look for gank windows between camps.")
 
     print(f"\n  {'='*70}")
     print()
@@ -1225,14 +1223,14 @@ def print_enemy(games, player_id, riot_id, champion=None, role=None, my_games=No
             print(f"  Their biggest weakness: {label} ({pct:.0f}% of losses).")
             # Simple actionable advice based on top observation type
             action_map = {
-                "death_cluster": "Punish early deaths — they spiral.",
-                "early_deaths": "Invade early — they die before 15 min.",
-                "inefficient_combat": "They take bad fights. Punish their aggression.",
-                "poor_farming": "Out-farm them — they fall behind in gold.",
-                "counter_pick": "They struggle into your pick. Play confident.",
-                "low_vision": "They have poor vision. Gank freely.",
-                "poor_objective_control": "They neglect objectives. Take dragons/herald early.",
+                "death_cluster": f"Punish early deaths — {pct:.0f}% of their losses cluster.",
+                "early_deaths": f"Invade early — {pct:.0f}% of losses have pre-15min deaths.",
+                "inefficient_combat": f"They deal low damage per death — force fights, they lose trades.",
+                "poor_farming": f"Out-farm them — they fall behind in gold by {pct:.0f}% of losses.",
+                "counter_pick": f"They struggle into your pick — play confident, you have the matchup.",
+                "low_vision": f"They ward sparingly — gank freely, they lack vision control.",
+                "poor_objective_control": f"They neglect objectives — take dragons/herald early.",
             }
-            advice = action_map.get(obs_type, "Exploit this pattern to win.")
+            advice = action_map.get(obs_type, f"Exploit their {label.lower()} pattern ({pct:.0f}% of losses).")
             print(f"  {advice}")
             print()

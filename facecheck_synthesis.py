@@ -153,13 +153,13 @@ class SynthesisLayer:
         if death_chains:
             return Observation(
                 obs_type="death_chain", label="death chain",
-                statement=f"Death chain: {size} deaths in {gap:.0f} minutes with accelerating frequency. Structural snowball.",
+                statement=f"Death chain: {size} deaths in {gap:.0f} minutes with accelerating frequency. {size}x death spiral in {gap:.0f}min window.",
                 score=0.9, data={"cluster_size": size, "gap_minutes": gap},
                 priority="critical"
             )
         return Observation(
             obs_type="death_cluster", label="death cluster",
-            statement=f"Death cluster: {size} deaths within {gap:.0f} minutes. Temporal concentration of deaths.",
+            statement=f"Death cluster: {size} deaths within {gap:.0f} minutes. {size} deaths in {gap:.0f}min — {(size/max(game.get('deaths',1),1))*100:.0f}% of total deaths concentrated.",
             score=0.85, data={"cluster_size": size, "gap_minutes": gap},
             priority="critical"
         )
@@ -180,7 +180,7 @@ class SynthesisLayer:
         length = chain.features.get("chain_length", 3)
         return Observation(
             obs_type="death_chain", label="death chain",
-            statement=f"Death chain: {length} deaths with shrinking gaps between them. Death rate accelerated over time.",
+                statement=f"Death chain: {length} deaths with shrinking gaps between them. Gap narrowed with each death.",
             score=0.85, data={"chain_length": length},
             priority="critical"
         )
@@ -205,7 +205,7 @@ class SynthesisLayer:
         if death_band in ("bottom_25", "bottom_10") and dpm_band in ("top_25", "top_10"):
             return Observation(
                 obs_type="efficient_combat", label="efficient combat",
-                statement=f"Efficient combat profile: {dpm:.0f} DPM, {kp:.0f}% KP, {deaths} deaths (bottom quartile). High impact with controlled risk.",
+                statement=f"Efficient combat profile: {dpm:.0f} DPM ({dpm_band} quartile), {kp:.0f}% KP with only {deaths} deaths ({death_band} quartile). {dpm:.0f} DPM per {deaths} death.",
                 score=0.7, data={"dpm": dpm, "kp": kp, "deaths": deaths, "death_band": death_band, "dpm_band": dpm_band},
                 priority="high"
             )
@@ -234,7 +234,7 @@ class SynthesisLayer:
         if death_band in ("top_25", "top_10") and damage_band in ("bottom_25", "bottom_10"):
             return Observation(
                 obs_type="inefficient_combat", label="inefficient combat",
-                statement=f"Inefficient combat profile: {deaths} deaths (top quartile), {damage//1000}k damage (bottom quartile). Deaths outpaced output.",
+                statement=f"Inefficient combat: {deaths} deaths (top quartile) with {damage//1000}k damage (bottom quartile). {damage//deaths//1000:.1f}k damage per death.",
                 score=0.75, data={"deaths": deaths, "damage": damage, "death_band": death_band, "damage_band": damage_band},
                 priority="high"
             )
@@ -258,7 +258,7 @@ class SynthesisLayer:
         wr = champ_repetition[0].features.get("champ_wr", 0.5)
         return Observation(
             obs_type="champion_repetition", label="champion repetition",
-            statement=f"Champion repetition: {streak} games on {champion} ({wr:.0%} WR). Familiarity structural factor.",
+            statement=f"Champion repetition: {streak} games on {champion} ({wr:.0%} WR). Win rate across those {streak} games.",
             score=0.6, data={"games_on_champ": streak, "champ_wr": wr},
             priority="medium"
         )
@@ -273,8 +273,8 @@ class SynthesisLayer:
             return None
         return Observation(
             obs_type="counter_pick", label="counter-pick position",
-            statement="Counter-pick position: picked after enemy same-role but outcome was unfavorable.",
-            score=0.55, data={},
+            statement=f"Counter-pick position: picked after enemy {game.get('champion', '?')} same-role — outcome was unfavorable.",
+            score=0.55, data={"champion": game.get("champion", ""), "enemy_champion": game.get("enemy", {}).get("champion", "")},
             priority="medium"
         )
 
@@ -287,14 +287,14 @@ class SynthesisLayer:
         if death_assessment == "critical" and not win:
             return Observation(
                 obs_type="critical_deaths", label="critical death count",
-                statement=f"Death count ({deaths}) in bottom 10% of your history. Deaths accumulated across phases.",
+                statement=f"Death count ({deaths}) in bottom 10% of your history. {deaths} deaths — top 10% death rate for you.",
                 score=0.65, data={"deaths": deaths, "assessment": death_assessment},
                 priority="high"
             )
         if death_assessment in ("excellent", "above_average") and win:
             return Observation(
                 obs_type="excellent_survival", label="excellent survival",
-                statement=f"Death count ({deaths}) well below your typical. Controlled survival pattern.",
+                statement=f"Death count ({deaths}) well below your typical — {death_assessment} survival rate.",
                 score=0.6, data={"deaths": deaths, "assessment": death_assessment},
                 priority="medium"
             )
@@ -966,7 +966,7 @@ class SynthesisLayer:
             length = chain.features.get("chain_length", 3)
             lessons.append(Lesson(
                 lesson_type="immediate",
-                text=f"Death chain detected: {length} deaths with accelerating frequency. Space your deaths to break the chain.",
+                text=f"Death chain: {length} deaths with accelerating frequency. Gap between deaths shrank each time.",
                 priority="high"
             ))
         elif death_clusters:
@@ -975,7 +975,7 @@ class SynthesisLayer:
             gap = cluster.features.get("gap_minutes", 0)
             lessons.append(Lesson(
                 lesson_type="immediate",
-                text=f"Death cluster: {size} deaths within {gap:.0f} minutes. After the first death, play defensively for the next 5 minutes.",
+                text=f"Death cluster: {size} deaths within {gap:.0f} minutes. After the first death, play defensively for the next {gap:.0f} minutes.",
                 priority="high"
             ))
 
@@ -983,7 +983,7 @@ class SynthesisLayer:
             phase = death_phase_conc[0].features.get("concentrated_phase", "unknown")
             lessons.append(Lesson(
                 lesson_type="practice",
-                text=f"Deaths concentrated in {phase} phase. Review your {phase}-game decision-making.",
+                text=f"Deaths concentrated in {phase} phase. {deaths} deaths in {phase} game — review those decisions.",
                 priority="medium"
             ))
 
@@ -1003,7 +1003,7 @@ class SynthesisLayer:
             if not win and death_band in ("top_25", "top_10") and damage_band in ("bottom_25", "bottom_10"):
                 lessons.append(Lesson(
                     lesson_type="immediate",
-                    text="High deaths (top quartile) with low damage (bottom quartile). Reduce aggression and focus on safe farming.",
+                    text=f"High deaths ({deaths}, {death_band} quartile) with low damage ({damage//1000}k, {damage_band} quartile). {damage//max(deaths,1)//1000:.1f}k damage per death — need more impact or fewer deaths.",
                     priority="critical"
                 ))
 
@@ -1013,7 +1013,7 @@ class SynthesisLayer:
             if win and dpm_band in ("top_25", "top_10") and death_band in ("bottom_25", "bottom_10"):
                 lessons.append(Lesson(
                     lesson_type="mindset",
-                    text=f"Efficient combat: {dpm:.0f} DPM (top quartile) with {deaths} deaths. This risk/reward balance is optimal.",
+                    text=f"Efficient combat: {dpm:.0f} DPM ({dpm_band} quartile) with {deaths} deaths ({death_band} quartile). {dpm:.0f} DPM per death — peak efficiency.",
                     priority="high"
                 ))
 
@@ -1023,16 +1023,17 @@ class SynthesisLayer:
                 heal_val = durability.get("total_heal", 0)
                 lessons.append(Lesson(
                     lesson_type="mindset",
-                    text=f"High self-sustain ({heal_val//1000}k healing, top quartile). Your ability to outlast opponents is a structural advantage.",
+                    text=f"High self-sustain: {heal_val//1000}k healing ({heal_band} quartile). Sustained {heal_val//max(deaths,1)//1000:.0f}k healing per death.",
                     priority="medium"
                 ))
 
             # High mitigation + low damage + loss
             mit_band = self._assess_against_distribution(durability.get("damage_mitigated", 0), mit_dist) if mit_dist else "unknown"
             if not win and mit_band in ("top_25", "top_10") and damage_band in ("bottom_25", "bottom_10"):
+                mit_val = durability.get("damage_mitigated", 0)
                 lessons.append(Lesson(
                     lesson_type="practice",
-                    text="High mitigation (top quartile) but low damage (bottom quartile). Survivability without pressure does not convert to wins.",
+                    text=f"High mitigation ({mit_val//1000}k, {mit_band} quartile) but low damage ({damage//1000}k, {damage_band} quartile). Soaking damage without converting to kills.",
                     priority="high"
                 ))
 
@@ -1042,7 +1043,7 @@ class SynthesisLayer:
                 cc_val = durability.get("cc_time", 0)
                 lessons.append(Lesson(
                     lesson_type="practice",
-                    text=f"{cc_val:.0f}s crowd control (top quartile) enabled team kills. Utility creates conversion opportunities.",
+                    text=f"{cc_val:.0f}s CC ({cc_band} quartile) enabled {kp:.0f}% kill participation. CC-to-kill conversion.",
                     priority="medium"
                 ))
 
@@ -1053,7 +1054,7 @@ class SynthesisLayer:
                 if win and wk_band in ("top_25", "top_10"):
                     lessons.append(Lesson(
                         lesson_type="practice",
-                        text=f"Cleared {wk_val} enemy wards (top quartile). Vision denial controls enemy movement paths.",
+                        text=f"Cleared {wk_val} enemy wards ({wk_band} quartile). Vision control denied {wk_val} ward positions.",
                         priority="medium"
                     ))
 
@@ -1081,21 +1082,21 @@ class SynthesisLayer:
                         delta = wr - overall_baseline
                         lessons.append(Lesson(
                             lesson_type="draft",
-                            text=f"Comfort on {champ} ({games_on} games, {wr:.0%} WR vs {overall_baseline:.0%} overall — +{delta:.0%}). Prioritize when available.",
+                            text=f"Comfort on {champ}: {games_on} games at {wr:.0%} WR vs {overall_baseline:.0%} overall (+{delta:.0%}). Strong pick — {delta:.0%} above your baseline.",
                             priority="medium"
                         ))
                     elif wr < overall_baseline - 0.10:
                         delta = overall_baseline - wr
                         lessons.append(Lesson(
                             lesson_type="draft",
-                            text=f"{champ}: {games_on} games at {wr:.0%} WR vs {overall_baseline:.0%} overall — {delta:.0%} below baseline. Structural underperformance on this pick.",
+                            text=f"{champ}: {games_on} games at {wr:.0%} WR vs {overall_baseline:.0%} overall ({delta:.0%} below baseline). Underperforming by {delta:.0%}.",
                             priority="medium"
                         ))
 
             if counter_relation and win:
                 lessons.append(Lesson(
                     lesson_type="draft",
-                    text="Counter-pick position in draft. Use the information advantage for early pressure.",
+                    text="Counter-pick position in draft. Picked after enemy same-role — had matchup info but didn't convert.",
                     priority="low"
                 ))
 
@@ -1104,13 +1105,13 @@ class SynthesisLayer:
                 if pos == "early":
                     lessons.append(Lesson(
                         lesson_type="draft",
-                        text="Early pick: blind selection requires flexible rune/build choices.",
+                        text="Early pick: drafted blind — no matchup info available at pick time.",
                         priority="low"
                     ))
                 elif pos == "late":
                     lessons.append(Lesson(
                         lesson_type="draft",
-                        text="Late pick: reactive selection — exploit matchup information.",
+                        text="Late pick: drafted with matchup info — could counter-pick or dodge bad matchups.",
                         priority="low"
                     ))
 
@@ -1118,7 +1119,7 @@ class SynthesisLayer:
         if deaths <= 3 and win:
             lessons.append(Lesson(
                 lesson_type="mindset",
-                text="Low death count with win. Controlled survival is a structural winning pattern.",
+                text=f"Low death count ({deaths}) with win. {deaths} deaths — controlled survival pattern.",
                 priority="medium"
             ))
 
@@ -1325,11 +1326,11 @@ class SynthesisLayer:
                 dpm_dist = engines.combat.distributions.get("damage_per_min")
                 dpm_band = self._assess_against_distribution(dpm, dpm_dist) if dpm_dist else "unknown"
                 if dpm_band in ("top_25", "top_10"):
-                    divergences.append("Won despite high deaths — high DPM offset mortality")
+                    divergences.append(f"Won despite high deaths — {dpm:.0f} DPM offset {deaths} deaths")
                 else:
-                    divergences.append("Won despite high deaths — team structural advantage")
+                    divergences.append(f"Won despite high deaths ({deaths}) — team carried")
             else:
-                divergences.append("Won despite high deaths")
+                divergences.append(f"Won despite high deaths ({deaths})")
 
         # Loss with low deaths but low damage (invisible impact)
         if not win and death_band in ("bottom_25", "bottom_10"):
@@ -1337,22 +1338,22 @@ class SynthesisLayer:
                 dpm_dist = engines.combat.distributions.get("damage_per_min")
                 dpm_band = self._assess_against_distribution(dpm, dpm_dist) if dpm_dist else "unknown"
                 if dpm_band in ("bottom_25", "bottom_10"):
-                    divergences.append("Lost with low deaths and low DPM — safety without impact")
+                    divergences.append(f"Lost with low deaths ({deaths}) and low DPM ({dpm:.0f}) — no impact")
                 else:
-                    divergences.append("Lost with low deaths — couldn't convert survival to win")
+                    divergences.append(f"Lost with low deaths ({deaths}) but {dpm:.0f} DPM — couldn't convert survival")
             else:
-                divergences.append("Lost with low deaths")
+                divergences.append(f"Lost with low deaths ({deaths})")
 
         # Early deaths but good CS (recovery structural pattern)
         if game.get("early_deaths", 0) > 0 and assessments.get("cs_at_10") == "excellent":
-            divergences.append("CS maintained despite early death events")
+            divergences.append(f"CS maintained despite {game.get('early_deaths', 0)} early deaths")
 
         # High damage but loss — DPM in top 25%, loss
         if not win and engines.combat and dpm > 0:
             dpm_dist = engines.combat.distributions.get("damage_per_min")
             dpm_band = self._assess_against_distribution(dpm, dpm_dist) if dpm_dist else "unknown"
             if dpm_band in ("top_25", "top_10"):
-                divergences.append("High DPM but loss — team structural deficit")
+                divergences.append(f"High DPM ({dpm:.0f}) but loss — team couldn't convert {dpm:.0f} DPM into a win")
 
         # High survival metrics but loss — heal/mit/CC in top 25%, loss
         if not win and engines.durability:
@@ -1366,11 +1367,11 @@ class SynthesisLayer:
             mit_band = self._assess_against_distribution(mit, mit_dist) if mit_dist else "unknown"
             cc_band = self._assess_against_distribution(cc, cc_dist) if cc_dist else "unknown"
             if heal_band in ("top_25", "top_10") and heal > 0:
-                divergences.append("High healing but loss — outlasted without conversion")
+                divergences.append(f"High healing ({heal//1000}k) but loss — outlasted without converting to kills")
             if mit_band in ("top_25", "top_10") and mit > 0:
-                divergences.append("High mitigation but loss — survived without pressure")
+                divergences.append(f"High mitigation ({mit//1000}k) but loss — soaked damage without creating pressure")
             if cc_band in ("top_25", "top_10") and cc > 0:
-                divergences.append("High CC but loss — chances created but not converted")
+                divergences.append(f"High CC ({cc:.0f}s) but loss — CC didn't convert to kills")
 
         return divergences
 

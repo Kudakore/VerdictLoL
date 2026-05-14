@@ -368,10 +368,11 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     bottom_lines = []
     if items:
         worst_item = items[0]
-        bottom_lines.append(f"Build: {worst_item['item']} at {worst_item['wr']}% WR. This is a known losing start. Change it first.")
+        bottom_lines.append(f"Build: {worst_item['item']} at {worst_item['wr']}% WR — {worst_item['wr']}% is below your overall win rate.")
     if champions:
         worst_champ = champions[0]
-        bottom_lines.append(f"Champion: {worst_champ['champion']} at {worst_champ['wr']}% WR across {worst_champ['games']} games. The data does not support this pick.")
+        delta = worst_champ['wr'] - wr
+        bottom_lines.append(f"Champion: {worst_champ['champion']} at {worst_champ['wr']}% WR across {worst_champ['games']} games ({delta:+.0f}% vs your {wr}% overall).")
     if observation_patterns:
         top = observation_patterns[0]
         stmt = top['statements'][0] if top['statements'] else 'Address this first.'
@@ -380,7 +381,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
         total_losses = len(losses)
         total_games = len(pairs)
         wr = _winrate(all_games)
-        bottom_lines.append(f"No dominant weakness found at {wr}% WR. Focus on consistency — the small edges compound.")
+        bottom_lines.append(f"No dominant weakness found at {wr}% WR. {total_losses} losses spread across multiple factors.")
 
     return {
         "observation_patterns": observation_patterns,
@@ -449,7 +450,7 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
         bottom_lines.append(f"Win pattern: {top['label']} ({top['pct']}% of wins). {stmt}")
     if not bottom_lines:
         wr = _winrate(all_games)
-        bottom_lines.append(f"Consistent performance at {wr}% WR. No single dominant pattern — keep playing your game.")
+        bottom_lines.append(f"Consistent performance at {wr}% WR. No single pattern dominates — multiple small factors drive wins.")
 
     return {
         "observation_patterns": observation_patterns,
@@ -506,7 +507,7 @@ def _print_basic_worst(games, champion, wins, losses, wr):
     if worst_champs and not champion:
         print(f"  Champion: {worst_champs[0][0]} at {worst_champs[0][1]}% WR.")
     if not worst_items and not worst_champs:
-        print(f"  No dominant weakness found at {wr}% WR. Focus on consistency.")
+        print(f"  No dominant weakness found at {wr}% WR. {len(losses)} losses spread across factors.")
 
 
 def _print_basic_best(games, champion, wins, losses, wr):
@@ -575,13 +576,15 @@ def print_worst(games, champion=None, player_id=None):
         if data["items"]:
             print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
             for item_info in data["items"]:
-                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games. This item is actively costing you.")
+                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games — {item_info['wr']}% is {100-item_info['wr']}% losses.")
             print()
 
         if data["champions"] and not champion:
             print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
             for champ_info in data["champions"]:
-                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games. The data does not support this pick.")
+                w = int(champ_info['games'] * champ_info['wr'] / 100)
+                l = champ_info['games'] - w
+                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games — {l} losses, {w} wins.")
             print()
 
         if data["observation_patterns"]:
@@ -620,13 +623,15 @@ def print_best(games, champion=None, player_id=None):
         if data["items"]:
             print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
             for item_info in data["items"]:
-                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games. This is a winning pattern.")
+                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games — {item_info['wins']} wins.")
             print()
 
         if data["champions"] and not champion:
             print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
             for champ_info in data["champions"]:
-                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games. This champion works for you.")
+                w = int(champ_info['games'] * champ_info['wr'] / 100)
+                l = champ_info['games'] - w
+                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games — {w} wins, {l} losses.")
             print()
 
         if data["observation_patterns"]:
@@ -760,5 +765,5 @@ def print_pool(games, min_games=3, player_id=None):
         print(f"  CONDITIONAL: {c[0]} — Trending up but hasn't crossed 50%. Play in low-stakes games while the trend holds.")
     if avoid_these:
         worst = avoid_these[-1]
-        print(f"  Bench:      {worst[0]} — {worst[2]}% WR. The data does not support this pick.")
+        print(f"  Bench:      {worst[0]} — {worst[2]}% WR across {worst[1]} games.")
     print()

@@ -424,7 +424,7 @@ def print_full_game(game, game_number=None, historical_games=None, legacy=False,
                     synthesis_active = True
         except Exception as e:
             print(f"\n  [Synthesis engine error: {e}]")
-            print("  Falling back to legacy analysis...")
+            print("  Falling back to raw stats...")
 
     if not synthesis_active:
         # ── RAW STATS (no synthesis available) ─────────────────────
