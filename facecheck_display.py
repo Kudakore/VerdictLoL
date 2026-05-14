@@ -179,8 +179,11 @@ def print_team_breakdown(game):
     enemy_sorted = sorted(enemy_team, key=lambda p: p["damage"], reverse=True)
     top_enemy = enemy_sorted[0] if enemy_sorted else None
     if top_enemy and top_enemy["damage"] > avg_dmg * 1.3:
-        print(f"  Enemy carry: {top_enemy['champion']} ({top_enemy['role']}) — {fmt_k(top_enemy['damage'])} damage, {top_enemy['kills']}/{top_enemy['deaths']}/{top_enemy['assists']} KDA")
-        print(f"  They were the primary threat. Everything they touched turned into pressure.")
+        total_enemy_dmg = sum(p["damage"] for p in enemy_team) or 1
+        dmg_share = top_enemy["damage"] / total_enemy_dmg * 100
+        total_enemy_kills = sum(p["kills"] for p in enemy_team) or 1
+        kp_pct = (top_enemy["kills"] + top_enemy["assists"]) / total_enemy_kills * 100
+        print(f"  Enemy carry: {top_enemy['champion']} ({top_enemy['role']}) — {fmt_k(top_enemy['damage'])} damage ({dmg_share:.0f}% of team), {top_enemy['kills']}/{top_enemy['deaths']}/{top_enemy['assists']} KDA, {kp_pct:.0f}% KP")
 
     # Did anyone on your team actually perform
     my_sorted = sorted(my_team, key=lambda p: p["damage"], reverse=True)
@@ -192,9 +195,10 @@ def print_team_breakdown(game):
     feeders = [p for p in my_team if p["deaths"] >= 8 and not p.get("is_me")]
     if feeders:
         feeder_str = ", ".join(f"{p['champion']} ({p['deaths']} deaths)" for p in feeders)
-        print(f"  Feeding: {feeder_str}")
-        if len(feeders) >= 2:
-            print(f"  Multiple lanes feeding simultaneously makes jungle recovery impossible.")
+        total_team_deaths = sum(p["deaths"] for p in my_team) or 1
+        feeder_deaths = sum(p["deaths"] for p in feeders)
+        feeder_pct = feeder_deaths / total_team_deaths * 100
+        print(f"  Feeding: {feeder_str} — {feeder_pct:.0f}% of team deaths")
 
     print()
 
