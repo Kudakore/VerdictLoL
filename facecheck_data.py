@@ -550,6 +550,15 @@ def get_current_rank_string(cache_or_entries):
     lp = solo.get("lp", 0)
     return f"{tier} {rank} — {lp} LP" if rank else f"{tier} — {lp} LP"
 
+def get_ranked_games(cache, champion=None, count=None):
+    """Return ranked games only, optionally filtered by champion and count."""
+    games = [g for g in cache.get("games", []) if g.get("queue_id") in (420, 440)]
+    if champion:
+        games = [g for g in games if g["champion"].lower() == champion.lower()]
+    if count:
+        games = games[:count]
+    return games
+
 # ─────────────────────────────────────────────
 # MAIN FETCH
 # ─────────────────────────────────────────────

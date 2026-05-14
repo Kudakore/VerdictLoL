@@ -14,16 +14,17 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `run_engine_from_cache(engine_class, cache_path, games, player_id)` — shared convenience wrapper in base
 
 ### Module Structure (current)
-- `facecheck_game.py` — CLI entry point, diagnostics, display functions (to be split in Phase D)
+- `facecheck_game.py` — CLI entry point and mode dispatch only
+- `facecheck_display.py` — Core display functions (fmt_num, fmt_k, print_full_game, print_compact_game, print_synthesis_block, print_team_breakdown, ROLE_LABELS, enemy_role_label)
+- `facecheck_aggregate.py` — synthesize_games, worst_patterns, best_patterns, print_worst, print_best, print_pool (synthesis-native aggregate analysis + display)
+- `facecheck_special.py` — Specialized modes (run_select, print_matchups, print_guide, print_bans, print_heatmap, print_pathing)
 - `facecheck_engine_base.py` — Distribution, EngineNode, EngineSignature, EngineOutput (with to_dict/from_dict), run_engine_from_cache
 - `facecheck_engine_*.py` — 7 domain-pure extraction engines
 - `facecheck_engine_cache.py` — Engine output caching (save/load MultiEngineOutput JSON, keyed on player_id + games hash, 24h auto-invalidation)
 - `facecheck_synthesis.py` — SynthesisLayer, Verdict, MultiEngineOutput (with to_dict/from_dict), Evidence, Lesson
 - `facecheck_similarity.py` — SimilarityEngine, GameFingerprint, ClusterResult, PatternResult
-- `facecheck_aggregate.py` — synthesize_games, worst_patterns, best_patterns (synthesis-native aggregate analysis)
 - `facecheck_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory
-- `facecheck_data.py` — Riot API, cache management, match record building
-- `facecheck_analysis.py` — Legacy analysis system (dead code — no active callers)
+- `facecheck_data.py` — Riot API, cache management, match record building, get_ranked_games
 
 ### Verdict System
 - Synthesis is the ONLY path for `face lastgame`, `face game N`, `face worst`, `face best`
@@ -31,7 +32,9 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `print_pool` uses _winrate from facecheck_aggregate.py (pure stats, no legacy)
 - Legacy `diagnose_game()` and `generate_verdict()` are dead code — defined but never called
 - `face lastgame` fallback shows raw stats (KDA, CS, gold, damage) — no templates, no legacy diagnosis
-- `facecheck_game.py` no longer imports from facecheck_analysis.py
+- `facecheck_game.py` no longer imports from facecheck_analysis.py (deleted)
+- Dead modules removed: facecheck_analysis.py, facecheck_diagnosis.py, facecheck_recent.py, facecheck_scout.py
+- Scout functionality (arbitrary player analysis) will be rebuilt in Phase G using synthesis pipeline
 
 ### Key Design Decisions
 - Personal baselines (P10/P25/P75/P90) — not generic thresholds
@@ -44,7 +47,7 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - **Phase A** (DONE): Engine call interface refactored
 - **Phase B** (DONE): Engine output caching
 - **Phase C** (DONE): Kill legacy for aggregates
-- **Phase D**: Split facecheck_game.py into modules
+- **Phase D** (DONE): Split facecheck_game.py into modules
 - **Phase E**: Compositional verdict rendering
 - **Phase F**: Aggregate synthesis for worst/best/pool
 - **Phase G**: Pro data adapter
