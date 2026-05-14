@@ -17,7 +17,7 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `facecheck_game.py` — CLI entry point and mode dispatch only
 - `facecheck_display.py` — Core display functions (fmt_num, fmt_k, print_full_game, print_compact_game, print_synthesis_block, print_team_breakdown, ROLE_LABELS, enemy_role_label)
 - `facecheck_aggregate.py` — synthesize_games, synthesize_games_with_engines, mine_observations, compare_players, worst_patterns, best_patterns, print_worst, print_best, print_pool (synthesis-native aggregate analysis + display, observation mining, player comparison)
-- `facecheck_special.py` — Specialized modes (run_select, print_matchups, print_guide, print_bans, print_heatmap, print_pathing, print_scout, print_compare)
+- `facecheck_special.py` — Specialized modes (run_select, print_matchups, print_guide, print_bans, print_heatmap, print_pathing, print_scout, print_compare, print_recent)
 - `facecheck_engine_base.py` — Distribution, EngineNode, EngineSignature, EngineOutput (with to_dict/from_dict), run_engine_from_cache
 - `facecheck_engine_*.py` — 7 domain-pure extraction engines
 - `facecheck_engine_cache.py` — Engine output caching (save/load MultiEngineOutput JSON, keyed on player_id + games hash, 24h auto-invalidation)
@@ -25,11 +25,45 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `facecheck_similarity.py` — SimilarityEngine, GameFingerprint, ClusterResult, PatternResult
 - `facecheck_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory (per-player caching via _player_model_path)
 - `facecheck_data.py` — Riot API, cache management, match record building, get_ranked_games, fetch_player_games (scout), resolve_riot_id
+- `facecheck_item.py` — Item and component lookup (standalone, not in synthesis pipeline)
+- `league_stats.py` — Match history stats, builds analysis (standalone)
+- `league_build.py` — Item and champion stat lookup (standalone)
+- `league_players.py` — Player/enemy analysis from games (standalone)
+- `league_scout.py` — Basic player scout (standalone, superseded by face scout)
+- `league_vault.py` — Champion data vault builder from Data Dragon
+
+### Command Reference (current)
+All commands available via `face`, `facecheck`, or `fc`:
+- `face fetch [N] [--force]` — Fetch and cache ranked games from Riot API
+- `face clean` — Remove duplicate games from cache
+- `face update` — Sync LeagueVault to latest patch
+- `face recent [solo|flex] [N]` — Pure match history table (no synthesis)
+- `face lastgame` — Deep dive on most recent game (synthesis)
+- `face game N` — Deep dive on specific game (synthesis)
+- `face games [N]` — Last N games with compact synthesis
+- `face select [champ]` — Browse games, pick one for deep dive
+- `face worst [champ]` — What is costing you games (observation mining)
+- `face best [champ]` — What is working (observation mining)
+- `face pool [N]` — Champion pool health report
+- `face matchups [champ]` — Matchup breakdown
+- `face bans` — Counter pool tracker
+- `face heatmap` — Time-of-game death analysis
+- `face pathing` — Jungle camp efficiency
+- `face scout Name#Tag [N]` — Analyze any player via synthesis
+- `face compare Name#Tag [N]` — Delta comparison vs another player
+- `face counter [champ]` — How to beat a champion
+- `face intel [champ]` — Full champion intel profile
+- `face guide` — Playing guide
+- `face item [name]` — Item stats and build path
+- `face components [name]` — Full component tree
+- `face champ [name]` — Champion base stats
+- `face builds [champ]` — Item winrate analysis
 
 ### Verdict System
 - Synthesis is the ONLY path for `face lastgame`, `face game N`, `face worst`, `face best`
 - `print_worst` and `print_best` use synthesize_games + mine_observations + worst_patterns/best_patterns via facecheck_aggregate.py
 - `print_pool` uses _winrate + per-champion observation enrichment when synthesis is available
+- `print_recent` is pure match history — no synthesis, no engines, just cache data
 - Legacy `diagnose_game()` and `generate_verdict()` are dead code — defined but never called
 - `face lastgame` fallback shows raw stats (KDA, CS, gold, damage) — no templates, no legacy diagnosis
 - `facecheck_game.py` no longer imports from facecheck_analysis.py (deleted)
@@ -48,8 +82,9 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - Observation mining — aggregate functions mine observations across verdicts (group by obs_type, filter baselines); replaces opaque mechanism grouping with structured, labeled patterns
 - Scout mode — arbitrary player analysis via same synthesis pipeline; per-player caching for engine outputs, player models, and game data
 - Compare mode — delta comparison between two players' patterns and distributions; observation rate deltas and distribution median deltas
+- Recent mode — pure match history with queue filtering, streaks, champion breakdown; no synthesis for speed
 
-### Refactoring Plan (8 phases)
+### Refactoring Plan (8 phases — ALL COMPLETE)
 - **Phase A** (DONE): Engine call interface refactored
 - **Phase B** (DONE): Engine output caching
 - **Phase C** (DONE): Kill legacy for aggregates
@@ -64,3 +99,7 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - G2: Manual compression after every session
 - G3: Never build anything crappy
 - G4: Always ask "can this be better?"
+
+### Known Issues
+- config.py contains API key — must be gitignored, never committed
+- config_template.py is the repo-safe template

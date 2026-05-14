@@ -21,5 +21,12 @@ C ScriptsCC-Session-Logs/
 *.swo
 .DS_Store
 
-# Local config override (use config.py as the template)
+# Local config — contains API key
+config.py
 config_local.py
+
+# Engine cache
+engine_cache/
+
+# Scout cache
+scout_cache/

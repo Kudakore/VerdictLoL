@@ -12,7 +12,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from facecheck_data import get_ranked_games
+from facecheck_data import get_ranked_games, get_current_rank_string
 from facecheck_display import ROLE_LABELS, enemy_role_label, print_full_game
 from facecheck_aggregate import synthesize_games, mine_observations, worst_patterns, best_patterns, compare_players, _winrate, _split_by_result
 
@@ -973,4 +973,122 @@ def print_compare(my_games, my_pairs, my_engines, ref_games, ref_pairs, ref_engi
     print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
     for line in data["bottom_line"].split("\n"):
         print(f"  {line}")
+    print()
+
+
+# ─────────────────────────────────────────────
+# RECENT — Match History
+# ─────────────────────────────────────────────
+
+QUEUE_LABELS = {420: "Solo/Duo", 440: "Flex"}
+
+
+def print_recent(games, queue_filter=None, count=20, cache=None):
+    """
+    Display match history — pure facts, no synthesis.
+    Queue filter: 420 (solo), 440 (flex), or None (all ranked).
+    """
+    if queue_filter:
+        filtered = [g for g in games if g.get("queue_id") == queue_filter]
+        queue_label = QUEUE_LABELS.get(queue_filter, "Ranked")
+    else:
+        filtered = list(games)
+        queue_label = "All Ranked"
+
+    if not filtered:
+        print(f"\n  No {queue_label} games found.\n")
+        return
+
+    show = filtered[:count]
+    wins = sum(1 for g in show if g.get("win"))
+    losses = len(show) - wins
+    wr = wins / len(show) * 100 if show else 0
+
+    # Streak calculation
+    streaks = []
+    current_streak = 0
+    current_type = None
+    for g in show:
+        w = g.get("win")
+        if current_type is None or w != current_type:
+            if current_type is not None:
+                streaks.append((current_type, current_streak))
+            current_type = w
+            current_streak = 1
+        else:
+            current_streak += 1
+    if current_type is not None:
+        streaks.append((current_type, current_streak))
+
+    best_win = max((s for s in streaks if s[0]), key=lambda x: x[1], default=None)
+    worst_loss = max((s for s in streaks if not s[0]), key=lambda x: x[1], default=None)
+
+    # Current streak (first game is most recent)
+    cur = streaks[0] if streaks else None
+    if cur:
+        streak_type = "W" if cur[0] else "L"
+        streak_str = f"{streak_type}{cur[1]} (current)"
+    else:
+        streak_str = "—"
+
+    best_w_str = f"W{best_win[1]}" if best_win else "—"
+    worst_l_str = f"L{worst_loss[1]}" if worst_loss else "—"
+
+    # Rank display
+    rank_str = ""
+    if cache and cache.get("rank_history"):
+        latest = cache["rank_history"][-1]
+        for qname, qdata in latest.get("queues", {}).items():
+            if queue_filter:
+                qid_map = {"Solo/Duo": 420, "Flex": 440}
+                if qid_map.get(qname) != queue_filter:
+                    continue
+            rank_str = f"{qdata.get('tier', '')} {qdata.get('rank', '')} {qdata.get('lp', 0)} LP"
+
+    header = f"Match History — {queue_label}, last {len(show)}"
+    if rank_str:
+        header += f"  |  {rank_str}"
+
+    print(f"\n  {'='*64}")
+    print(f"  {header}")
+    print(f"  {'='*64}")
+    print(f"  {'#':>3}  {'W/L':>4}  {'Champion':<14} {'KDA':>8}  {'CS':>5}  {'CS/m':>5}  {'Dmg':>6}  {'Min':>5}  {'Role':>7}")
+    print(f"  {'─'*64}")
+
+    for i, g in enumerate(show, 1):
+        result = "W" if g.get("win") else "L"
+        champ = g.get("champion", "?")[:14]
+        kda = f"{g.get('kills',0)}/{g.get('deaths',0)}/{g.get('assists',0)}"
+        cs = g.get("cs_final", 0) or 0
+        cs_m = g.get("cs_per_min", 0) or 0
+        dmg = g.get("damage", 0) or 0
+        dur = g.get("duration_min", 0) or 0
+        role = g.get("role", "?")
+
+        # Format damage
+        if dmg >= 1000:
+            dmg_str = f"{dmg/1000:.1f}k"
+        else:
+            dmg_str = str(dmg)
+
+        print(f"  {i:>3}  {result:>4}  {champ:<14} {kda:>8}  {cs:>5}  {cs_m:>5.1f}  {dmg_str:>6}  {dur:>5.1f}  {role:>7}")
+
+    # Footer
+    print(f"  {'─'*64}")
+    print(f"  Record: {wins}W {losses}L ({wr:.0f}%)  |  Streak: {streak_str}  |  Best: {best_w_str}  Worst: {worst_l_str}")
+
+    # Per-champion summary if showing enough games
+    champ_stats = defaultdict(lambda: {"w": 0, "l": 0})
+    for g in show:
+        c = g.get("champion", "?")
+        if g.get("win"):
+            champ_stats[c]["w"] += 1
+        else:
+            champ_stats[c]["l"] += 1
+
+    if len(show) >= 10 and len(champ_stats) > 1:
+        champs_sorted = sorted(champ_stats.items(), key=lambda x: x[1]["w"] + x[1]["l"], reverse=True)[:8]
+        champ_line = "  ".join(f"{c} {s['w']}/{s['w']+s['l']}" for c, s in champs_sorted)
+        print(f"  By champ: {champ_line}")
+
     print()

@@ -26,7 +26,7 @@ from facecheck_aggregate import print_worst, print_best, print_pool, synthesize_
 # Specialized modes
 from facecheck_special import (
     run_select, print_matchups, print_guide,
-    print_bans, print_heatmap, print_pathing, print_scout, print_compare
+    print_bans, print_heatmap, print_pathing, print_scout, print_compare, print_recent
 )
 
 # Champion Intelligence — optional, graceful fallback
@@ -48,12 +48,12 @@ if __name__ == "__main__":
     cache = load_cache()
 
     if not cache.get("games"):
-        print("No cached games found. Run: facecheck-fetch")
+        print("No cached games found. Run: face fetch")
         sys.exit(1)
 
     args = sys.argv[1:]
     if not args:
-        print("Usage: face lastgame | face game N | face games [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face worst [champ] | face best [champ]")
+        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face worst [champ] | face best [champ]")
         sys.exit(1)
 
     mode = args[0]
@@ -116,6 +116,23 @@ if __name__ == "__main__":
 
     elif mode == "select":
         run_select(cache, champion=champion, result_filter=result_filter)
+
+    elif mode == "recent":
+        # Queue filter: solo, flex, or all
+        queue_map = {"solo": 420, "flex": 440}
+        queue_arg = champion  # reuse champion arg for queue keyword
+        queue_filter = queue_map.get((queue_arg or "").lower()) if queue_arg else None
+        # Count: if champion is a number (no queue keyword), that's the count
+        n = count or 20
+        if queue_arg and queue_arg.lower() not in queue_map:
+            # Try parsing queue_arg as a count
+            try:
+                n = int(queue_arg)
+                queue_filter = None
+            except ValueError:
+                print(f"Unknown queue filter: {queue_arg}. Use: solo, flex, or a number.")
+                sys.exit(1)
+        print_recent(historical, queue_filter=queue_filter, count=n, cache=cache)
 
     elif mode == "worst":
         if not ranked:
@@ -207,7 +224,7 @@ if __name__ == "__main__":
             print("Example: facecheck compare Faker#KR1 10")
             sys.exit(1)
         if not cache.get("games"):
-            print("No cached games found. Run: facecheck-fetch")
+            print("No cached games found. Run: face fetch")
             sys.exit(1)
 
         compare_count = count or 20
