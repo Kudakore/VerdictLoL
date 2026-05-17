@@ -31,7 +31,6 @@ from verdict_special import (
 
 # Champion Intelligence — optional, graceful fallback
 try:
-    sys.path.insert(0, "C:\\Facecheck")
     from verdict_champ_intel import (
         print_counter_command, print_intel_profile
     )

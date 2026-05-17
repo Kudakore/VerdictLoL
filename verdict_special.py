@@ -18,7 +18,6 @@ from verdict_aggregate import synthesize_games, synthesize_games_with_engines, m
 
 # Champion Intelligence — optional, graceful fallback
 try:
-    sys.path.insert(0, "C:\\Facecheck")
     from verdict_champ_intel import (
         get_matchup_context, print_matchup_context,
         print_counter_command, print_intel_profile,

@@ -1413,8 +1413,9 @@ if __name__ == "__main__":
 
     # Load cache for games and player_id
     import json
+    from verdict_paths import CACHE_PATH
     try:
-        with open("C:\\Facecheck\\verdict_cache.json", 'r') as f:
+        with open(CACHE_PATH, 'r') as f:
             cache = json.load(f)
         games = cache.get("games", [])
         player_id = cache.get("puuid", "test_player")

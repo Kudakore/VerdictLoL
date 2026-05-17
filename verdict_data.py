@@ -8,10 +8,10 @@ from datetime import datetime
 from verdict_config import ensure_config
 ensure_config()
 
+from verdict_paths import CACHE_PATH, SCOUT_DIR
 from config import API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE
 GAME_NAME = MY_GAME_NAME
 TAG_LINE  = MY_TAG_LINE
-CACHE_PATH = "C:\\Facecheck\\verdict_cache.json"
 
 HEADERS = {"X-Riot-Token": API_KEY}
 QUEUE_FILTERS = [420, 440]
@@ -621,9 +621,8 @@ def fetch_player_games(riot_id, count=20):
 
     # Per-player scout cache
     safe_id = player_id.replace("#", "_").replace(" ", "_")
-    scout_dir = "C:\\Facecheck\\scout_cache"
-    os.makedirs(scout_dir, exist_ok=True)
-    scout_path = os.path.join(scout_dir, f"{safe_id}_cache.json")
+    os.makedirs(SCOUT_DIR, exist_ok=True)
+    scout_path = os.path.join(SCOUT_DIR, f"{safe_id}_cache.json")
 
     # Load existing scout cache
     if os.path.exists(scout_path):

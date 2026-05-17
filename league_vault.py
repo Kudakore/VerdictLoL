@@ -9,7 +9,7 @@ import sys
 # CONFIG
 # ─────────────────────────────────────────────
 
-VAULT = "C:\\Facecheck\\LeagueVault"
+from verdict_paths import VAULT_ROOT as VAULT
 
 STYLE_ARCHETYPES = {
     1:  "Hypercarry Skirmisher",

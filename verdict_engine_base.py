@@ -179,7 +179,7 @@ class EngineOutput:
         )
 
 
-def run_engine_from_cache(engine_class, cache_path: str = "C:\\Facecheck\\verdict_cache.json",
+def run_engine_from_cache(engine_class, cache_path: str = None,
                           games=None, player_id=None) -> Optional[EngineOutput]:
     """
     Run any engine class, either from explicit data or from cache.
@@ -187,6 +187,10 @@ def run_engine_from_cache(engine_class, cache_path: str = "C:\\Facecheck\\verdic
     If games and player_id are provided, uses them directly (no file read).
     Otherwise, loads from cache_path (backward compatible).
     """
+    if cache_path is None:
+        from verdict_paths import CACHE_PATH
+        cache_path = CACHE_PATH
+
     if games is not None and player_id is not None:
         engine = engine_class(player_id)
         return engine.analyze(games)

@@ -14,10 +14,8 @@ import statistics
 from collections import defaultdict
 
 from verdict_config import ensure_config; ensure_config()
+from verdict_paths import BRAIN_PATH, SCOUT_DIR, CACHE_PATH
 from config import MY_GAME_NAME, MY_TAG_LINE
-
-
-BRAIN_PATH = "C:\\Facecheck\\verdict_brain.json"
 
 
 @dataclass
@@ -394,9 +392,8 @@ def _player_model_path(player_id: str) -> str:
     if player_id == default_id:
         return BRAIN_PATH
     safe_id = player_id.replace("#", "_").replace(" ", "_")
-    scout_dir = "C:\\Facecheck\\scout_cache"
-    os.makedirs(scout_dir, exist_ok=True)
-    return os.path.join(scout_dir, f"{safe_id}_brain.json")
+    os.makedirs(SCOUT_DIR, exist_ok=True)
+    return os.path.join(SCOUT_DIR, f"{safe_id}_brain.json")
 
 
 def get_or_create_player_model(player_id: str, games: List[Dict] = None) -> PlayerModel:
@@ -420,7 +417,7 @@ if __name__ == "__main__":
     import json
 
     try:
-        with open("C:\\Facecheck\\verdict_cache.json", 'r') as f:
+        with open(CACHE_PATH, 'r') as f:
             cache = json.load(f)
         games = cache.get("games", [])
         player_id = cache.get("puuid", "test_player")

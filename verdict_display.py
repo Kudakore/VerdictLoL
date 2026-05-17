@@ -17,7 +17,6 @@ from verdict_synthesis import Observation
 
 # Synthesis Layer — 7 Domain-Pure Engines
 try:
-    sys.path.insert(0, "C:\\Facecheck")
     from verdict_engine_death import run_death_engine
     from verdict_engine_economy import run_economy_engine
     from verdict_engine_combat import run_combat_engine

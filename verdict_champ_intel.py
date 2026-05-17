@@ -19,7 +19,7 @@ if hasattr(sys.stderr, "reconfigure"):
 # CONFIG
 # ─────────────────────────────────────────────
 
-VAULT_PATH = "C:\\Facecheck\\LeagueVault\\Champions"
+from verdict_paths import VAULT_PATH
 
 CHAMPION_ALIASES = {
     "MonkeyKing":  "Wukong",

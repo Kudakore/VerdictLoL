@@ -99,7 +99,8 @@ def show_champion(query):
         return
 
     query_lower = query.lower()
-    vault_path = "C:\\Facecheck\\LeagueVault\\Champions"
+    from verdict_paths import VAULT_PATH
+    vault_path = VAULT_PATH
 
     # Exact filename match first, then startswith, then contains
     files = os.listdir(vault_path)

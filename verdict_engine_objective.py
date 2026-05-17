@@ -326,7 +326,9 @@ def run_objective_engine(games=None, player_id=None, cache_path=None) -> Optiona
     if games is not None and player_id is not None:
         engine = ObjectiveEngine(player_id)
         return engine.analyze(games)
-    cache_path = cache_path or "C:\\Facecheck\\verdict_cache.json"
+    if cache_path is None:
+        from verdict_paths import CACHE_PATH
+        cache_path = CACHE_PATH
     return run_engine_from_cache(ObjectiveEngine, cache_path, games=games, player_id=player_id)
 
 
