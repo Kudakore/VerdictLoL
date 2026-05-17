@@ -745,7 +745,7 @@ def print_intel_profile(champion_name):
     intel = load_champion_intel(champion_name)
     if not intel:
         print(f"\n  No intel profile found for {champion_name}.")
-        print(f"  Run 'league-update' to refresh the vault.")
+        print(f"  Run 'face update' to refresh the vault.")
         return
 
     signals = intel.get("signals", {})

@@ -88,6 +88,7 @@ if __name__ == "__main__":
 
     ranked = get_ranked_games(cache, champion=champion)
     historical = get_ranked_games(cache)  # unfiltered for context
+    from facecheck_config import ensure_config; ensure_config()
     from config import MY_GAME_NAME, MY_TAG_LINE
     player_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
 
@@ -162,7 +163,7 @@ if __name__ == "__main__":
             print("Example: facecheck counter Warwick")
             sys.exit(1)
         if not INTEL_AVAILABLE:
-            print("Champion intel unavailable. Run 'league-update' to populate the vault.")
+            print("Champion intel unavailable. Run 'face update' to populate the vault.")
             sys.exit(1)
         print_counter_command(champion, game_history=historical)
 
@@ -172,7 +173,7 @@ if __name__ == "__main__":
             print("Example: facecheck intel Warwick")
             sys.exit(1)
         if not INTEL_AVAILABLE:
-            print("Champion intel unavailable. Run 'league-update' to populate the vault.")
+            print("Champion intel unavailable. Run 'face update' to populate the vault.")
             sys.exit(1)
         print_intel_profile(champion)
 

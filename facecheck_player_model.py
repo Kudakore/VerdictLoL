@@ -13,6 +13,7 @@ import os
 import statistics
 from collections import defaultdict
 
+from facecheck_config import ensure_config; ensure_config()
 from config import MY_GAME_NAME, MY_TAG_LINE
 
 

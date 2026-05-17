@@ -24,6 +24,7 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `facecheck_synthesis.py` — SynthesisLayer, Verdict, MultiEngineOutput (with to_dict/from_dict), Evidence, Lesson, Observation
 - `facecheck_similarity.py` — SimilarityEngine, GameFingerprint, ClusterResult, PatternResult
 - `facecheck_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory (per-player caching via _player_model_path)
+- `facecheck_config.py` — Config auto-setup (creates config.py from template if missing, validates placeholders)
 - `facecheck_data.py` — Riot API, cache management, match record building, get_ranked_games, fetch_player_games (scout), resolve_riot_id, get_current_game (Spectator v5), resolve_puuid_to_riot_id
 - `facecheck_item.py` — Item and component lookup (standalone, not in synthesis pipeline)
 - `league_stats.py` — Match history stats, builds analysis (standalone)
@@ -103,5 +104,6 @@ All commands available via `face`, `facecheck`, or `fc`:
 - G4: Always ask "can this be better?"
 
 ### Known Issues
-- config.py contains API key — must be gitignored, never committed
-- config_template.py is the repo-safe template
+- config.py is gitignored (contains API key) — auto-created from config_template.py on first run via facecheck_config.py
+- Counter-pick observation fires at 97.8% of losses — likely too broad, needs producer tuning
+- `face enemy` not tested in a live game — Spectator API behavior during champ select is untested

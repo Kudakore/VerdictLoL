@@ -3,6 +3,7 @@ import json
 import sys
 
 import sys as _sys; _sys.path.insert(0, "C:\\Facecheck")
+from facecheck_config import ensure_config; ensure_config()
 from config import API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE
 GAME_NAME = MY_GAME_NAME
 TAG_LINE  = MY_TAG_LINE
