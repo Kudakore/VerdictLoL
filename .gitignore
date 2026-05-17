@@ -4,8 +4,8 @@ __pycache__/
 *.pyo
 
 # Local cache — contains personal match history
-facecheck_cache.json
-facecheck_brain.json
+verdict_cache.json
+verdict_brain.json
 
 # Claude Code
 .claude/
@@ -30,3 +30,7 @@ engine_cache/
 
 # Scout cache
 scout_cache/
+
+# Legacy cache files (pre-rename)
+facecheck_cache.json
+facecheck_brain.json

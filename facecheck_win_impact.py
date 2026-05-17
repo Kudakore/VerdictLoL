@@ -319,7 +319,7 @@ class WinImpactOutput:
         return [s for s in self.signatures if s.classification == "lever"]
 
 
-def run_win_impact_engine(cache_path: str = "C:\\Facecheck\\facecheck_cache.json") -> Optional[WinImpactOutput]:
+def run_win_impact_engine(cache_path: str = "C:\\Facecheck\\verdict_cache.json") -> Optional[WinImpactOutput]:
     """Convenience function for running the engine against the cache."""
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
