@@ -1227,9 +1227,15 @@ def analyze_enemy(games, player_id, riot_id, champion=None, role=None, my_games=
                 "early_deaths": f"Invade early — {pct:.0f}% of losses have pre-15min deaths.",
                 "inefficient_combat": f"They deal low damage per death — force fights, they lose trades.",
                 "poor_farming": f"Out-farm them — they fall behind in gold by {pct:.0f}% of losses.",
-                "counter_pick": f"They struggle into your pick — play confident, you have the matchup.",
+                "countered": f"They were counter-picked and lost — draft advantage matters.",
+                "blind_pick": f"They drafted blind and lost — early pick disadvantage.",
+                "cs_deficit_early": f"They fall behind in CS early — pressure their lane.",
+                "gold_deficit": f"They fall behind in gold by 15 — snowball your lead.",
+                "vision_deficit": f"They ward sparingly — gank freely, they lack vision control.",
                 "low_vision": f"They ward sparingly — gank freely, they lack vision control.",
-                "poor_objective_control": f"They neglect objectives — take dragons/herald early.",
+                "no_dragon": f"They neglect objectives — take dragons/herald early.",
+                "no_turret_pressure": f"They don't push towers — pressure their lanes.",
+                "low_kp": f"They avoid fights — force skirmishes, they don't show up.",
             }
             advice = action_map.get(obs_type, f"Exploit their {label.lower()} pattern ({pct:.0f}% of losses).")
             bottom_line = {"weakness": label, "pct": pct, "advice": advice}

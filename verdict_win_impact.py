@@ -188,13 +188,6 @@ class WinImpactEngine:
         if turret_kills == 0 and game.duration_min > 20:
             signals.append("no_turrets")
 
-        # ── Draft signals ────────────────────────────────
-        side = game.side
-        if side == "blue":
-            signals.append("blue_side")
-        elif side == "red":
-            signals.append("red_side")
-
         return signals
 
     def _compute_signal_impact(self, sig_type: str, game_indices: List[int]) -> Optional[WinImpactSignature]:

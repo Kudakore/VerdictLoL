@@ -151,17 +151,20 @@ class SynthesisLayer:
         cluster = death_clusters[0]
         gap = cluster.features.get("gap_minutes", 0)
         size = cluster.features.get("cluster_size", 2)
+        severity_bonus = min(0.25, (size / max(game.deaths, 1)) * 0.2)
         if death_chains:
+            chain_length = death_chains[0].features.get("chain_length", size)
+            severity_bonus = min(0.2, (chain_length - 2) * 0.1)
             return Observation(
                 obs_type="death_chain", label="death chain",
                 statement=f"Death chain: {size} deaths in {gap:.0f} minutes with accelerating frequency. {size}x death spiral in {gap:.0f}min window.",
-                score=0.9, data={"cluster_size": size, "gap_minutes": gap},
+                score=0.7 + severity_bonus, data={"cluster_size": size, "gap_minutes": gap},
                 priority="critical"
             )
         return Observation(
             obs_type="death_cluster", label="death cluster",
             statement=f"Death cluster: {size} deaths within {gap:.0f} minutes. {size} deaths in {gap:.0f}min — {(size/max(game.deaths,1))*100:.0f}% of total deaths concentrated.",
-            score=0.85, data={"cluster_size": size, "gap_minutes": gap},
+            score=0.7 + severity_bonus, data={"cluster_size": size, "gap_minutes": gap},
             priority="critical"
         )
 
@@ -179,10 +182,11 @@ class SynthesisLayer:
             return None
         chain = death_chains[0]
         length = chain.features.get("chain_length", 3)
+        severity_bonus = min(0.2, (length - 2) * 0.1)
         return Observation(
             obs_type="death_chain", label="death chain",
-                statement=f"Death chain: {length} deaths with shrinking gaps between them. Gap narrowed with each death.",
-            score=0.85, data={"chain_length": length},
+            statement=f"Death chain: {length} deaths with shrinking gaps between them. Gap narrowed with each death.",
+            score=0.7 + severity_bonus, data={"chain_length": length},
             priority="critical"
         )
 
@@ -210,12 +214,7 @@ class SynthesisLayer:
                 score=0.7, data={"dpm": dpm, "kp": kp, "deaths": deaths, "death_band": death_band, "dpm_band": dpm_band},
                 priority="high"
             )
-        return Observation(
-            obs_type="win_baseline", label=f"{champion} win",
-            statement=f"{champion} win: {deaths} deaths, {dpm:.0f} DPM, {kp:.0f}% KP.",
-            score=0.4, data={"deaths": deaths, "dpm": dpm, "kp": kp},
-            priority="low"
-        )
+        return None
 
     def observe_inefficient_combat(self, game, signatures, baseline, engines):
         """Loss with high deaths and low damage — inefficient combat."""
@@ -239,12 +238,7 @@ class SynthesisLayer:
                 score=0.75, data={"deaths": deaths, "damage": damage, "death_band": death_band, "damage_band": damage_band},
                 priority="high"
             )
-        return Observation(
-            obs_type="loss_baseline", label=f"{champion} loss",
-            statement=f"{champion} loss: {deaths} deaths, {damage//1000}k damage.",
-            score=0.4, data={"deaths": deaths, "damage": damage},
-            priority="low"
-        )
+        return None
 
     def observe_champion_repetition(self, game, signatures, baseline, engines):
         """Multiple games on same champion — familiarity structural factor."""
@@ -264,20 +258,42 @@ class SynthesisLayer:
             priority="medium"
         )
 
-    def observe_counter_pick(self, game, signatures, baseline, engines):
-        """Picked after enemy same-role but outcome was unfavorable."""
+    def observe_countered(self, game, signatures, baseline, engines):
+        """Picked after enemy same-role (had matchup info) but lost anyway."""
         win = game.win
         if win:
             return None
         counter_relation = self._get_signatures_by_type(signatures, "counter_pick_relation")
         if not counter_relation:
             return None
-        enemy_champ = game.enemy.champion if game.enemy else ""
+        relation = counter_relation[0].features.get("relation", "")
+        if relation != "counter":
+            return None
+        enemy_champ = game.enemy.champion if game.enemy else "unknown"
         return Observation(
-            obs_type="counter_pick", label="counter-pick position",
-            statement=f"Counter-pick position: picked after enemy {game.champion} same-role — outcome was unfavorable.",
-            score=0.55, data={"champion": game.champion, "enemy_champion": enemy_champ},
+            obs_type="countered", label="countered in draft",
+            statement=f"Countered in draft: picked after enemy {enemy_champ} same-role but lost despite having matchup info.",
+            score=0.55, data={"champion": game.champion, "enemy_champion": enemy_champ, "relation": relation},
             priority="medium"
+        )
+
+    def observe_blind_pick(self, game, signatures, baseline, engines):
+        """Picked before enemy same-role (drafted blind) and lost."""
+        win = game.win
+        if win:
+            return None
+        counter_relation = self._get_signatures_by_type(signatures, "counter_pick_relation")
+        if not counter_relation:
+            return None
+        relation = counter_relation[0].features.get("relation", "")
+        if relation != "blind":
+            return None
+        enemy_champ = game.enemy.champion if game.enemy else "unknown"
+        return Observation(
+            obs_type="blind_pick", label="blind pick",
+            statement=f"Blind pick: drafted before enemy same-role with no matchup info.",
+            score=0.45, data={"champion": game.champion, "enemy_champion": enemy_champ, "relation": relation},
+            priority="low"
         )
 
     def observe_death_assessment(self, game, signatures, baseline, engines):
@@ -302,14 +318,183 @@ class SynthesisLayer:
             )
         return None
 
+    def observe_economy_pattern(self, game, signatures, baseline, engines):
+        """CS and gold patterns using personal baselines."""
+        cs_10 = game.cs_10
+        cs_15 = game.cs_15
+        gold_lead_15 = game.gold_lead_15
+        win = game.win
+
+        # CS deficit on loss — uses economy engine distribution
+        if not win and cs_10 is not None:
+            cs_10_dist = engines.economy.distributions.get("cs_at_10") if engines.economy else None
+            if cs_10_dist:
+                cs_10_band = self._assess_against_distribution(cs_10, cs_10_dist)
+                if cs_10_band == "bottom_10":
+                    p25 = cs_10_dist.percentiles.get(25, cs_10_dist.mean * 0.75)
+                    severity = min(1.0, (p25 - cs_10) / max(p25, 1)) if cs_10 < p25 else 0
+                    return Observation(
+                        obs_type="cs_deficit_early", label="early CS deficit",
+                        statement=f"Early CS deficit: {cs_10} CS at 10 minutes (bottom 10%). laning weakness.",
+                        score=0.6 + 0.1 * severity, data={"cs_10": cs_10, "band": cs_10_band},
+                        priority="high"
+                    )
+                elif cs_10_band == "bottom_25":
+                    return Observation(
+                        obs_type="cs_deficit_early", label="early CS deficit",
+                        statement=f"Below-average CS: {cs_10} at 10 minutes (bottom 25%).",
+                        score=0.5, data={"cs_10": cs_10, "band": cs_10_band},
+                        priority="medium"
+                    )
+
+        # Gold deficit at 15
+        if not win and gold_lead_15 is not None and gold_lead_15 < -1000:
+            return Observation(
+                obs_type="gold_deficit", label="gold deficit",
+                statement=f"Gold deficit at 15: {gold_lead_15:+,} gold behind at 15 minutes.",
+                score=0.65, data={"gold_lead_15": gold_lead_15},
+                priority="high"
+            )
+
+        # CS efficiency on win — both cs_10 and cs_15 in top quartiles
+        if win and cs_10 is not None and cs_15 is not None:
+            cs_10_dist = engines.economy.distributions.get("cs_at_10") if engines.economy else None
+            if cs_10_dist:
+                cs_10_band = self._assess_against_distribution(cs_10, cs_10_dist)
+                cs_15_dist = engines.economy.distributions.get("cs_at_15") if engines.economy else None
+                cs_15_band = self._assess_against_distribution(cs_15, cs_15_dist) if cs_15_dist else "unknown"
+                if cs_10_band in ("top_10", "top_25") and cs_15_band in ("top_10", "top_25"):
+                    return Observation(
+                        obs_type="cs_efficiency", label="CS efficiency",
+                        statement=f"CS efficiency: {cs_10} at 10, {cs_15} at 15 (top quartile). Strong laning.",
+                        score=0.55, data={"cs_10": cs_10, "cs_15": cs_15, "cs_10_band": cs_10_band, "cs_15_band": cs_15_band},
+                        priority="medium"
+                    )
+
+        return None
+
+    def observe_vision_control(self, game, signatures, baseline, engines):
+        """Vision score patterns using personal baselines."""
+        vision = self._get_profile_features(signatures, "vision_profile")
+        vscore = vision.get("vision_score", game.vision)
+        wk = vision.get("wards_killed", 0)
+        win = game.win
+
+        if not win and vscore > 0:
+            vision_dist = engines.vision.distributions.get("vision_score") if engines.vision else None
+            if vision_dist:
+                vscore_band = self._assess_against_distribution(vscore, vision_dist)
+                if vscore_band == "bottom_10":
+                    return Observation(
+                        obs_type="vision_deficit", label="critical vision deficit",
+                        statement=f"Critical vision deficit: {vscore} vision score (bottom 10%). Minimal map control.",
+                        score=0.7, data={"vision_score": vscore, "band": vscore_band},
+                        priority="high"
+                    )
+                elif vscore_band == "bottom_25":
+                    return Observation(
+                        obs_type="low_vision", label="low vision",
+                        statement=f"Low vision: {vscore} vision score (bottom 25%). Limited map awareness.",
+                        score=0.5, data={"vision_score": vscore, "band": vscore_band},
+                        priority="medium"
+                    )
+
+        if win and wk > 0:
+            wk_dist = engines.vision.distributions.get("wards_killed") if engines.vision else None
+            if wk_dist:
+                wk_band = self._assess_against_distribution(wk, wk_dist)
+                if wk_band in ("top_10", "top_25"):
+                    return Observation(
+                        obs_type="vision_denial", label="vision denial",
+                        statement=f"Vision denial: {wk} enemy wards cleared ({wk_band} quartile). Map control advantage.",
+                        score=0.5, data={"wards_killed": wk, "band": wk_band},
+                        priority="medium"
+                    )
+
+        return None
+
+    def observe_objective_control(self, game, signatures, baseline, engines):
+        """Objective patterns — dragons, turrets, barons."""
+        win = game.win
+        duration = game.duration_min
+        my_team = game.my_team
+        turret_kills = game.turret_kills
+
+        if not win and duration > 15 and my_team and my_team.dragon_kills == 0:
+            return Observation(
+                obs_type="no_dragon", label="no dragon control",
+                statement=f"No dragons taken in a {duration:.0f}-minute loss. Objective control gap.",
+                score=0.6, data={"duration_min": duration, "dragon_kills": 0},
+                priority="high"
+            )
+
+        if win and my_team and my_team.dragon_kills >= 3:
+            dragons = my_team.dragon_kills
+            return Observation(
+                obs_type="dragon_control", label="dragon control",
+                statement=f"Dragon control: {dragons} dragons taken (strong objective play).",
+                score=0.5, data={"dragon_kills": dragons},
+                priority="medium"
+            )
+
+        if not win and duration > 20 and turret_kills == 0:
+            return Observation(
+                obs_type="no_turret_pressure", label="no turret pressure",
+                statement=f"No turret kills in a {duration:.0f}-minute loss. No lane pressure converted.",
+                score=0.55, data={"duration_min": duration, "turret_kills": 0},
+                priority="medium"
+            )
+
+        return None
+
+    def observe_kill_participation(self, game, signatures, baseline, engines):
+        """Kill participation patterns using personal baselines."""
+        kp_pct = game.kp_pct
+        if kp_pct <= 0:
+            return None
+
+        win = game.win
+        combat = self._get_profile_features(signatures, "combat_profile")
+        kills = combat.get("kills", game.kills)
+        assists = combat.get("assists", game.assists)
+
+        kp_dist = engines.combat.distributions.get("kill_participation") if engines.combat else None
+        if not kp_dist:
+            return None
+
+        kp_band = self._assess_against_distribution(kp_pct, kp_dist)
+
+        if not win and kp_band == "bottom_10":
+            return Observation(
+                obs_type="low_kp", label="low kill participation",
+                statement=f"Absent from fights: {kp_pct:.0f}% kill participation (bottom 10%). {kills} kills, {assists} assists.",
+                score=0.7, data={"kp_pct": kp_pct, "band": kp_band, "kills": kills, "assists": assists},
+                priority="high"
+            )
+
+        if win and kp_band == "top_10":
+            return Observation(
+                obs_type="high_kp", label="carry presence",
+                statement=f"Carry presence: {kp_pct:.0f}% kill participation (top 10%). {kills} kills, {assists} assists.",
+                score=0.5, data={"kp_pct": kp_pct, "band": kp_band, "kills": kills, "assists": assists},
+                priority="medium"
+            )
+
+        return None
+
     OBSERVATION_PRODUCERS = [
         observe_death_cluster,
         observe_death_chain,
         observe_efficient_combat,
         observe_inefficient_combat,
         observe_champion_repetition,
-        observe_counter_pick,
+        observe_countered,
+        observe_blind_pick,
         observe_death_assessment,
+        observe_economy_pattern,
+        observe_vision_control,
+        observe_objective_control,
+        observe_kill_participation,
     ]
 
     def collect_observations(self, game, signatures, baseline, engines):

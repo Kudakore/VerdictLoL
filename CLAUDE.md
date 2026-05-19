@@ -87,7 +87,7 @@ All commands available via `verdict`, `v`, or `face` (legacy alias):
 - Matched comparison for counterfactual reasoning — not simple correlation
 - Superadditivity detection — only 2/31 signal pairs compound harm
 - Centroid delta for mechanism naming — not hardcoded thresholds
-- Observation pipeline — each verdict branch is an independent producer that returns Observation or None; all producers run, top observations compose the verdict statement
+- Observation pipeline — 12 independent producers return Observation or None; severity-scaled scores (0.45–0.95); counter_pick split into observe_countered/observe_blind_pick; baselines removed; new producers for economy, vision, objectives, kill participation; win_impact side signals removed
 - Observation mining — aggregate functions mine observations across verdicts (group by obs_type, filter baselines); replaces opaque mechanism grouping with structured, labeled patterns
 - AnalysisService — single pipeline entry point; runs engines once per player, caches all intermediate results; analysis methods reuse cached data instead of re-running pipeline
 - Data/display split — every `print_` function has an `analyze_*`/`render_*` twin that returns structured dicts; print versions are thin wrappers
@@ -101,6 +101,7 @@ All commands available via `verdict`, `v`, or `face` (legacy alias):
 - **Phase 2** (DONE): Data/display split (19 analyze_/render_ + print_ pairs)
 - **Phase 3** (DONE): AnalysisService (verdict_service.py, render_game pipeline deduplication)
 - **Game dataclass** (DONE): Typed Game/EnemyPlayer/PlayerStats/TeamObjectives/JunglePathing dataclasses replace untyped dicts. Fixes 8 bugs where wrong field names silently returned 0.
+- **Producer calibration** (DONE): Counter-pick split into countered/blind_pick (was 97.8% fire rate). Baseline fallbacks removed. 4 new producers: economy, vision, objectives, kill participation. Severity scaling on death cluster/chain. Side signals removed from win_impact.
 - **Phase 4** (PLANNED): FastAPI Server
 - **Phase 5** (PLANNED): Tauri Shell
 - **Phase 6** (PLANNED): Frontend Views
