@@ -103,6 +103,7 @@ All commands available via `verdict`, `v`, or `face` (legacy alias):
 - **Game dataclass** (DONE): Typed Game/EnemyPlayer/PlayerStats/TeamObjectives/JunglePathing dataclasses replace untyped dicts. Fixes 8 bugs where wrong field names silently returned 0.
 - **Producer calibration** (DONE): Counter-pick split into countered/blind_pick (was 97.8% fire rate). Baseline fallbacks removed. 4 new producers: economy, vision, objectives, kill participation. Severity scaling on death cluster/chain. Side signals removed from win_impact.
 - **Engine contracts** (DONE): Documented in docs/engine-contracts.md. 11/40+ distribution keys consumed, 10/30+ signature types consumed, objective engine unused by synthesis, draft has no distributions.
+- **Synthesis decomposition** (DONE): Verdict output channels now use structured dataclasses. CombatProfile/DurabilityProfile/VisionProfile replace untyped dicts from `_get_profile_features()`. Summary returns `Summary` with `List[SummarySection]` (domain, statement, data) instead of joined string. Divergences return `List[Divergence]` (divergence_type, statement, data, win) instead of `List[str]`. Dead `_build_explanation_multi()` removed. `Verdict.explanation` field removed.
 - **Phase 4** (PLANNED): FastAPI Server
 - **Phase 5** (PLANNED): Tauri Shell
 - **Phase 6** (PLANNED): Frontend Views

@@ -85,6 +85,105 @@ class Observation:
 
 
 @dataclass
+class CombatProfile:
+    """Typed combat profile extracted from engine signatures, with game-field fallbacks."""
+    deaths: int
+    damage: int
+    dpm: float
+    kp_pct: float
+    kills: int
+    assists: int
+
+    @classmethod
+    def from_signatures(cls, signatures: List[EngineSignature], game: Game) -> 'CombatProfile':
+        features = _extract_features(signatures, "combat_profile")
+        return cls(
+            deaths=features.get("deaths", game.deaths),
+            damage=features.get("damage", game.damage),
+            dpm=features.get("dpm", game.damage_per_min),
+            kp_pct=features.get("kp_pct", game.kp_pct),
+            kills=features.get("kills", game.kills),
+            assists=features.get("assists", game.assists),
+        )
+
+
+@dataclass
+class DurabilityProfile:
+    """Typed durability profile extracted from engine signatures, with game-field fallbacks."""
+    total_heal: int
+    damage_mitigated: int
+    cc_time: float
+    damage_shielded: int
+
+    @classmethod
+    def from_signatures(cls, signatures: List[EngineSignature], game: Game) -> 'DurabilityProfile':
+        features = _extract_features(signatures, "durability_profile")
+        return cls(
+            total_heal=features.get("total_heal", game.total_heal),
+            damage_mitigated=features.get("damage_mitigated", game.damage_mitigated),
+            cc_time=features.get("cc_time", game.cc_time),
+            damage_shielded=features.get("damage_shielded", game.damage_shielded),
+        )
+
+
+@dataclass
+class VisionProfile:
+    """Typed vision profile extracted from engine signatures, with game-field fallbacks."""
+    vision_score: int
+    vision_per_min: float
+    wards_killed: int
+    wards_placed: int
+    control_wards: int
+
+    @classmethod
+    def from_signatures(cls, signatures: List[EngineSignature], game: Game) -> 'VisionProfile':
+        features = _extract_features(signatures, "vision_profile")
+        return cls(
+            vision_score=features.get("vision_score", game.vision),
+            vision_per_min=features.get("vision_per_min", game.vision_per_min),
+            wards_killed=features.get("wards_killed", game.wards_killed),
+            wards_placed=features.get("wards_placed", game.wards_placed),
+            control_wards=features.get("control_wards", game.control_wards),
+        )
+
+
+@dataclass
+class SummarySection:
+    """One domain's contribution to the verdict summary."""
+    domain: str      # "death", "combat", "economy", "durability", "vision", "draft"
+    statement: str   # Sentence fragment for this domain
+    data: dict       # Supporting data for UI rendering
+
+
+@dataclass
+class Summary:
+    """Structured summary assembled from domain sections."""
+    sections: List[SummarySection]
+
+    def to_text(self) -> str:
+        """Backward-compatible text rendering — joins section statements."""
+        parts = [s.statement for s in self.sections if s.statement]
+        return " ".join(parts) if parts else ""
+
+
+@dataclass
+class Divergence:
+    """A way this game diverged from expected patterns."""
+    divergence_type: str    # e.g. "win_high_deaths", "loss_low_impact"
+    statement: str          # Human-readable sentence
+    data: dict              # Structured data for UI rendering
+    win: bool               # True if divergence is from a win
+
+
+def _extract_features(signatures: List[EngineSignature], signature_type: str) -> Dict:
+    """Extract features dict from the first matching profile signature."""
+    for s in signatures:
+        if s.signature_type == signature_type:
+            return s.features
+    return {}
+
+
+@dataclass
 class Verdict:
     """A synthesis verdict about a game or pattern."""
     verdict_id: str
@@ -96,14 +195,13 @@ class Verdict:
     confidence: float  # 0-1
 
     # Supporting structure
-    summary: str  # 1-2 sentence expansion
-    explanation: str  # Deeper explanation
+    summary: Summary  # Structured summary with domain sections
     primary_evidence: List[Evidence] = field(default_factory=list)
     lessons: List[Lesson] = field(default_factory=list)
 
     # Pattern matching
     matched_patterns: List[str] = field(default_factory=list)  # Pattern IDs that matched
-    divergences: List[str] = field(default_factory=list)  # Where this game diverged from pattern
+    divergences: List[Divergence] = field(default_factory=list)  # Where this game diverged from pattern
 
     # Reasoning layer (Phase 1)
     similar_games: List[str] = field(default_factory=list)  # match_ids of structurally similar games
@@ -139,7 +237,8 @@ class SynthesisLayer:
     # OBSERVATION PRODUCERS (Phase E)
     # ─────────────────────────────────────────────
 
-    def observe_death_cluster(self, game, signatures, baseline, engines):
+    def observe_death_cluster(self, game, signatures, baseline, engines,
+                               combat_profile=None, durability_profile=None, vision_profile=None):
         """Death cluster: multiple deaths within a short window."""
         win = game.win
         if win:
@@ -168,7 +267,8 @@ class SynthesisLayer:
             priority="critical"
         )
 
-    def observe_death_chain(self, game, signatures, baseline, engines):
+    def observe_death_chain(self, game, signatures, baseline, engines,
+                             combat_profile=None, durability_profile=None, vision_profile=None):
         """Death chain: deaths with shrinking gaps (accelerating)."""
         win = game.win
         if win:
@@ -190,17 +290,18 @@ class SynthesisLayer:
             priority="critical"
         )
 
-    def observe_efficient_combat(self, game, signatures, baseline, engines):
+    def observe_efficient_combat(self, game, signatures, baseline, engines,
+                                   combat_profile=None, durability_profile=None, vision_profile=None):
         """Win with low deaths and high damage — efficient carry."""
         win = game.win
         if not win:
             return None
-        combat = self._get_profile_features(signatures, "combat_profile")
-        deaths = combat.get("deaths", game.deaths)
-        damage = combat.get("damage", game.damage)
-        dpm = combat.get("dpm", game.damage_per_min)
-        kp = combat.get("kp_pct", game.kp_pct)
-        champion = game.champion
+        if combat_profile is None:
+            combat_profile = CombatProfile.from_signatures(signatures, game)
+        deaths = combat_profile.deaths
+        damage = combat_profile.damage
+        dpm = combat_profile.dpm
+        kp = combat_profile.kp_pct
         if damage <= 0:
             return None
         death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
@@ -216,14 +317,16 @@ class SynthesisLayer:
             )
         return None
 
-    def observe_inefficient_combat(self, game, signatures, baseline, engines):
+    def observe_inefficient_combat(self, game, signatures, baseline, engines,
+                                     combat_profile=None, durability_profile=None, vision_profile=None):
         """Loss with high deaths and low damage — inefficient combat."""
         win = game.win
         if win:
             return None
-        combat = self._get_profile_features(signatures, "combat_profile")
-        deaths = combat.get("deaths", game.deaths)
-        damage = combat.get("damage", game.damage)
+        if combat_profile is None:
+            combat_profile = CombatProfile.from_signatures(signatures, game)
+        deaths = combat_profile.deaths
+        damage = combat_profile.damage
         champion = game.champion
         if deaths <= 0:
             return None
@@ -240,7 +343,8 @@ class SynthesisLayer:
             )
         return None
 
-    def observe_champion_repetition(self, game, signatures, baseline, engines):
+    def observe_champion_repetition(self, game, signatures, baseline, engines,
+                                    combat_profile=None, durability_profile=None, vision_profile=None):
         """Multiple games on same champion — familiarity structural factor."""
         win = game.win
         if not win:
@@ -258,7 +362,8 @@ class SynthesisLayer:
             priority="medium"
         )
 
-    def observe_countered(self, game, signatures, baseline, engines):
+    def observe_countered(self, game, signatures, baseline, engines,
+                          combat_profile=None, durability_profile=None, vision_profile=None):
         """Picked after enemy same-role (had matchup info) but lost anyway."""
         win = game.win
         if win:
@@ -277,7 +382,8 @@ class SynthesisLayer:
             priority="medium"
         )
 
-    def observe_blind_pick(self, game, signatures, baseline, engines):
+    def observe_blind_pick(self, game, signatures, baseline, engines,
+                           combat_profile=None, durability_profile=None, vision_profile=None):
         """Picked before enemy same-role (drafted blind) and lost."""
         win = game.win
         if win:
@@ -296,12 +402,14 @@ class SynthesisLayer:
             priority="low"
         )
 
-    def observe_death_assessment(self, game, signatures, baseline, engines):
+    def observe_death_assessment(self, game, signatures, baseline, engines,
+                                  combat_profile=None, durability_profile=None, vision_profile=None):
         """Death count in extreme percentile bands."""
         win = game.win
         death_assessment = baseline.get("deaths_per_game", "typical")
-        combat = self._get_profile_features(signatures, "combat_profile")
-        deaths = combat.get("deaths", game.deaths)
+        if combat_profile is None:
+            combat_profile = CombatProfile.from_signatures(signatures, game)
+        deaths = combat_profile.deaths
         if death_assessment == "critical" and not win:
             return Observation(
                 obs_type="critical_deaths", label="critical death count",
@@ -318,7 +426,8 @@ class SynthesisLayer:
             )
         return None
 
-    def observe_economy_pattern(self, game, signatures, baseline, engines):
+    def observe_economy_pattern(self, game, signatures, baseline, engines,
+                                combat_profile=None, durability_profile=None, vision_profile=None):
         """CS and gold patterns using personal baselines."""
         cs_10 = game.cs_10
         cs_15 = game.cs_15
@@ -373,11 +482,13 @@ class SynthesisLayer:
 
         return None
 
-    def observe_vision_control(self, game, signatures, baseline, engines):
+    def observe_vision_control(self, game, signatures, baseline, engines,
+                               combat_profile=None, durability_profile=None, vision_profile=None):
         """Vision score patterns using personal baselines."""
-        vision = self._get_profile_features(signatures, "vision_profile")
-        vscore = vision.get("vision_score", game.vision)
-        wk = vision.get("wards_killed", 0)
+        if vision_profile is None:
+            vision_profile = VisionProfile.from_signatures(signatures, game)
+        vscore = vision_profile.vision_score
+        wk = vision_profile.wards_killed
         win = game.win
 
         if not win and vscore > 0:
@@ -413,7 +524,8 @@ class SynthesisLayer:
 
         return None
 
-    def observe_objective_control(self, game, signatures, baseline, engines):
+    def observe_objective_control(self, game, signatures, baseline, engines,
+                                   combat_profile=None, durability_profile=None, vision_profile=None):
         """Objective patterns — dragons, turrets, barons."""
         win = game.win
         duration = game.duration_min
@@ -447,16 +559,18 @@ class SynthesisLayer:
 
         return None
 
-    def observe_kill_participation(self, game, signatures, baseline, engines):
+    def observe_kill_participation(self, game, signatures, baseline, engines,
+                                    combat_profile=None, durability_profile=None, vision_profile=None):
         """Kill participation patterns using personal baselines."""
         kp_pct = game.kp_pct
         if kp_pct <= 0:
             return None
 
         win = game.win
-        combat = self._get_profile_features(signatures, "combat_profile")
-        kills = combat.get("kills", game.kills)
-        assists = combat.get("assists", game.assists)
+        if combat_profile is None:
+            combat_profile = CombatProfile.from_signatures(signatures, game)
+        kills = combat_profile.kills
+        assists = combat_profile.assists
 
         kp_dist = engines.combat.distributions.get("kill_participation") if engines.combat else None
         if not kp_dist:
@@ -497,11 +611,14 @@ class SynthesisLayer:
         observe_kill_participation,
     ]
 
-    def collect_observations(self, game, signatures, baseline, engines):
+    def collect_observations(self, game, signatures, baseline, engines,
+                              combat_profile=None, durability_profile=None, vision_profile=None):
         """Run all observation producers, collect and sort by score."""
         observations = []
         for producer in self.OBSERVATION_PRODUCERS:
-            obs = producer(self, game, signatures, baseline, engines)
+            obs = producer(self, game, signatures, baseline, engines,
+                          combat_profile=combat_profile, durability_profile=durability_profile,
+                          vision_profile=vision_profile)
             if obs is not None:
                 observations.append(obs)
         return sorted(observations, key=lambda o: o.score, reverse=True)
@@ -827,6 +944,11 @@ class SynthesisLayer:
             if engine_output:
                 all_signatures += self._get_engine_signatures(engine_output, game.match_id)
 
+        # Build typed profiles from signatures
+        combat_profile = CombatProfile.from_signatures(all_signatures, game)
+        durability_profile = DurabilityProfile.from_signatures(all_signatures, game)
+        vision_profile = VisionProfile.from_signatures(all_signatures, game)
+
         # Assess game against personal baselines
         baseline_assessments = self.player_model.assess_game(game)
 
@@ -847,7 +969,7 @@ class SynthesisLayer:
                     break
 
         # Build the verdict statement with compositional observations
-        observations = self.collect_observations(game, all_signatures, baseline_assessments, engines)
+        observations = self.collect_observations(game, all_signatures, baseline_assessments, engines, combat_profile, durability_profile, vision_profile)
         if observations:
             statement = observations[0].statement
             confidence = observations[0].score
@@ -858,16 +980,16 @@ class SynthesisLayer:
             confidence = 0.5
 
         # Build supporting evidence
-        evidence = self._build_evidence_multi(game, all_signatures, baseline_assessments, engines)
+        evidence = self._build_evidence_multi(game, all_signatures, baseline_assessments, engines, combat_profile, durability_profile, vision_profile)
 
         # Derive lessons with combat context
-        lessons = self._derive_lessons_multi(game, all_signatures, baseline_assessments, engines)
+        lessons = self._derive_lessons_multi(game, all_signatures, baseline_assessments, engines, combat_profile, durability_profile, vision_profile)
 
         # Find matched patterns from player model
         matched_patterns = self._match_player_patterns(game, baseline_assessments)
 
         # Identify divergences
-        divergences = self._identify_divergences_multi(game, baseline_assessments, engines)
+        divergences = self._identify_divergences_multi(game, baseline_assessments, engines, all_signatures, combat_profile, durability_profile, vision_profile)
 
         return Verdict(
             verdict_id=verdict_id,
@@ -875,8 +997,7 @@ class SynthesisLayer:
             verdict_type="fractal_analysis",
             statement=statement,
             confidence=confidence,
-            summary=self._build_summary_multi(game, engines),
-            explanation=self._build_explanation_multi(game, all_signatures, matched_patterns, engines),
+            summary=self._build_summary_multi(game, engines, all_signatures, combat_profile, durability_profile, vision_profile),
             primary_evidence=evidence,
             lessons=lessons,
             matched_patterns=matched_patterns,
@@ -953,15 +1074,13 @@ class SynthesisLayer:
     # ─────────────────────────────────────────────
 
     def _build_evidence_multi(self, game: Game, signatures: List[EngineSignature],
-                              assessments: Dict[str, str], engines: MultiEngineOutput) -> List[Evidence]:
+                              assessments: Dict[str, str], engines: MultiEngineOutput,
+                              combat_profile: CombatProfile, durability_profile: DurabilityProfile,
+                              vision_profile: VisionProfile) -> List[Evidence]:
         """Build evidence from engine outputs and distributions."""
         evidence = []
         win = game.win
         duration = game.duration_min
-
-        combat = self._get_profile_features(signatures, "combat_profile")
-        durability = self._get_profile_features(signatures, "durability_profile")
-        vision = self._get_profile_features(signatures, "vision_profile")
 
         # ── Death evidence ──
         if engines.death:
@@ -986,7 +1105,7 @@ class SynthesisLayer:
 
             death_dist = engines.death.distributions.get("deaths_per_game")
             if death_dist:
-                deaths = combat.get("deaths", game.deaths)
+                deaths = combat_profile.deaths
                 band = self._assess_against_distribution(deaths, death_dist)
                 evidence.append(Evidence(
                     evidence_type="stat",
@@ -996,11 +1115,11 @@ class SynthesisLayer:
                 ))
 
         # ── Combat evidence ──
-        if engines.combat and combat:
-            dpm = combat.get("dpm", 0)
-            kp = combat.get("kp_pct", 0)
-            deaths = combat.get("deaths", 0)
-            damage = combat.get("damage", 0)
+        if engines.combat and combat_profile:
+            dpm = combat_profile.dpm
+            kp = combat_profile.kp_pct
+            deaths = combat_profile.deaths
+            damage = combat_profile.damage
 
             dpm_dist = engines.combat.distributions.get("damage_per_min")
             if dpm and dpm_dist:
@@ -1030,11 +1149,11 @@ class SynthesisLayer:
             ))
 
         # ── Durability evidence ──
-        if engines.durability and durability:
-            heal = durability.get("total_heal", 0)
-            mit = durability.get("damage_mitigated", 0)
-            cc = durability.get("cc_time", 0)
-            shield = durability.get("damage_shielded", 0)
+        if engines.durability and durability_profile:
+            heal = durability_profile.total_heal
+            mit = durability_profile.damage_mitigated
+            cc = durability_profile.cc_time
+            shield = durability_profile.damage_shielded
 
             if heal > 0:
                 evidence.append(Evidence(
@@ -1066,12 +1185,12 @@ class SynthesisLayer:
                 ))
 
         # ── Vision evidence ──
-        if engines.vision and vision:
-            vscore = vision.get("vision_score", 0)
-            vpm = vision.get("vision_per_min", 0)
-            wk = vision.get("wards_killed", 0)
-            wp = vision.get("wards_placed", 0)
-            cw = vision.get("control_wards", 0)
+        if engines.vision and vision_profile:
+            vscore = vision_profile.vision_score
+            vpm = vision_profile.vision_per_min
+            wk = vision_profile.wards_killed
+            wp = vision_profile.wards_placed
+            cw = vision_profile.control_wards
 
             evidence.append(Evidence(
                 evidence_type="stat",
@@ -1125,14 +1244,12 @@ class SynthesisLayer:
         return evidence
 
     def _derive_lessons_multi(self, game: Game, signatures: List[EngineSignature],
-                             assessments: Dict[str, str], engines: MultiEngineOutput) -> List[Lesson]:
+                             assessments: Dict[str, str], engines: MultiEngineOutput,
+                             combat_profile: CombatProfile, durability_profile: DurabilityProfile,
+                             vision_profile: VisionProfile) -> List[Lesson]:
         """Derive lessons from structural patterns in engine outputs."""
         lessons = []
         win = game.win
-
-        combat = self._get_profile_features(signatures, "combat_profile")
-        durability = self._get_profile_features(signatures, "durability_profile")
-        vision = self._get_profile_features(signatures, "vision_profile")
 
         death_clusters = self._get_signatures_by_type(signatures, "death_cluster")
         death_chains = self._get_signatures_by_type(signatures, "death_chain")
@@ -1142,10 +1259,10 @@ class SynthesisLayer:
         counter_relation = self._get_signatures_by_type(signatures, "counter_pick_relation")
         pick_position = self._get_signatures_by_type(signatures, "pick_position")
 
-        deaths = combat.get("deaths", game.deaths)
-        damage = combat.get("damage", game.damage)
-        dpm = combat.get("dpm", game.damage_per_min)
-        kp = combat.get("kp_pct", game.kp_pct)
+        deaths = combat_profile.deaths
+        damage = combat_profile.damage
+        dpm = combat_profile.dpm
+        kp = combat_profile.kp_pct
 
         # ── Death structural lessons ──
         if death_chains:
@@ -1205,9 +1322,9 @@ class SynthesisLayer:
                 ))
 
             # High healing + win
-            heal_band = self._assess_against_distribution(durability.get("total_heal", 0), heal_dist) if heal_dist else "unknown"
+            heal_band = self._assess_against_distribution(durability_profile.total_heal, heal_dist) if heal_dist else "unknown"
             if win and heal_band in ("top_25", "top_10"):
-                heal_val = durability.get("total_heal", 0)
+                heal_val = durability_profile.total_heal
                 lessons.append(Lesson(
                     lesson_type="mindset",
                     text=f"High self-sustain: {heal_val//1000}k healing ({heal_band} quartile). Sustained {heal_val//max(deaths,1)//1000:.0f}k healing per death.",
@@ -1215,9 +1332,9 @@ class SynthesisLayer:
                 ))
 
             # High mitigation + low damage + loss
-            mit_band = self._assess_against_distribution(durability.get("damage_mitigated", 0), mit_dist) if mit_dist else "unknown"
+            mit_band = self._assess_against_distribution(durability_profile.damage_mitigated, mit_dist) if mit_dist else "unknown"
             if not win and mit_band in ("top_25", "top_10") and damage_band in ("bottom_25", "bottom_10"):
-                mit_val = durability.get("damage_mitigated", 0)
+                mit_val = durability_profile.damage_mitigated
                 lessons.append(Lesson(
                     lesson_type="practice",
                     text=f"High mitigation ({mit_val//1000}k, {mit_band} quartile) but low damage ({damage//1000}k, {damage_band} quartile). Soaking damage without converting to kills.",
@@ -1225,9 +1342,9 @@ class SynthesisLayer:
                 ))
 
             # High CC + win
-            cc_band = self._assess_against_distribution(durability.get("cc_time", 0), cc_dist) if cc_dist else "unknown"
+            cc_band = self._assess_against_distribution(durability_profile.cc_time, cc_dist) if cc_dist else "unknown"
             if win and cc_band in ("top_25", "top_10"):
-                cc_val = durability.get("cc_time", 0)
+                cc_val = durability_profile.cc_time
                 lessons.append(Lesson(
                     lesson_type="practice",
                     text=f"{cc_val:.0f}s CC ({cc_band} quartile) enabled {kp:.0f}% kill participation. CC-to-kill conversion.",
@@ -1235,7 +1352,7 @@ class SynthesisLayer:
                 ))
 
             # Vision denial + win
-            wk_val = vision.get("wards_killed", 0)
+            wk_val = vision_profile.wards_killed
             if wk_dist and wk_val > 0:
                 wk_band = self._assess_against_distribution(wk_val, wk_dist)
                 if win and wk_band in ("top_25", "top_10"):
@@ -1312,53 +1429,68 @@ class SynthesisLayer:
 
         return lessons
 
-    def _build_summary_multi(self, game: Game, engines: MultiEngineOutput) -> str:
+    def _build_summary_multi(self, game: Game, engines: MultiEngineOutput,
+                              signatures: List[EngineSignature],
+                              combat_profile: CombatProfile, durability_profile: DurabilityProfile,
+                              vision_profile: VisionProfile) -> Summary:
         """Build summary from structural patterns in engine outputs."""
-        parts = []
+        sections = []
         win = game.win
         champion = game.champion
-
-        # Collect signatures for this game
-        signatures = []
-        for engine_attr in ["death", "economy", "combat", "durability", "vision", "objective", "draft"]:
-            engine_output = getattr(engines, engine_attr)
-            if engine_output:
-                signatures += self._get_engine_signatures(engine_output, game.match_id)
-
-        combat = self._get_profile_features(signatures, "combat_profile")
-        durability = self._get_profile_features(signatures, "durability_profile")
-        vision = self._get_profile_features(signatures, "vision_profile")
 
         death_clusters = self._get_signatures_by_type(signatures, "death_cluster")
         death_chains = self._get_signatures_by_type(signatures, "death_chain")
 
         # Death structural summary
-        # Use distribution bands, not magic numbers
-        deaths = combat.get("deaths", game.deaths)
+        deaths = combat_profile.deaths
         death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
         death_band = self._assess_against_distribution(deaths, death_dist) if death_dist else "unknown"
         if death_chains:
             chain = death_chains[0]
-            parts.append(f"Death chain: {chain.features.get('chain_length', 0)} deaths with accelerating frequency.")
+            sections.append(SummarySection(
+                domain="death",
+                statement=f"Death chain: {chain.features.get('chain_length', 0)} deaths with accelerating frequency.",
+                data={"chain_length": chain.features.get("chain_length", 0)}
+            ))
         elif death_clusters:
             cluster = death_clusters[0]
-            parts.append(f"Death cluster: {cluster.features.get('cluster_size', 0)} deaths within {cluster.features.get('gap_minutes', 0):.0f} minutes.")
+            sections.append(SummarySection(
+                domain="death",
+                statement=f"Death cluster: {cluster.features.get('cluster_size', 0)} deaths within {cluster.features.get('gap_minutes', 0):.0f} minutes.",
+                data={"cluster_size": cluster.features.get("cluster_size", 0), "gap_minutes": cluster.features.get("gap_minutes", 0)}
+            ))
         elif death_band in ("top_10", "top_25"):
-            parts.append(f"High death count: {deaths} ({death_band.replace('_', ' ')}).")
+            sections.append(SummarySection(
+                domain="death",
+                statement=f"High death count: {deaths} ({death_band.replace('_', ' ')}).",
+                data={"deaths": deaths, "band": death_band}
+            ))
         elif death_band in ("bottom_10", "bottom_25"):
-            parts.append(f"Low death count: {deaths} ({death_band.replace('_', ' ')}).")
+            sections.append(SummarySection(
+                domain="death",
+                statement=f"Low death count: {deaths} ({death_band.replace('_', ' ')}).",
+                data={"deaths": deaths, "band": death_band}
+            ))
 
         # Combat structural summary
-        if engines.combat and combat:
-            dpm = combat.get("dpm", 0)
-            kp = combat.get("kp_pct", 0)
+        if engines.combat and combat_profile:
+            dpm = combat_profile.dpm
+            kp = combat_profile.kp_pct
             dpm_dist = engines.combat.distributions.get("damage_per_min")
             if dpm and dpm_dist:
                 band = self._assess_against_distribution(dpm, dpm_dist)
                 if band in ("top_10", "top_25"):
-                    parts.append(f"High DPM ({dpm:.0f}) — {band.replace('_', ' ')} of your history.")
+                    sections.append(SummarySection(
+                        domain="combat",
+                        statement=f"High DPM ({dpm:.0f}) — {band.replace('_', ' ')} of your history.",
+                        data={"dpm": dpm, "band": band}
+                    ))
                 elif band in ("bottom_10", "bottom_25"):
-                    parts.append(f"Low DPM ({dpm:.0f}) — {band.replace('_', ' ')} of your history.")
+                    sections.append(SummarySection(
+                        domain="combat",
+                        statement=f"Low DPM ({dpm:.0f}) — {band.replace('_', ' ')} of your history.",
+                        data={"dpm": dpm, "band": band}
+                    ))
 
         # Economy structural summary
         if engines.economy:
@@ -1369,15 +1501,23 @@ class SynthesisLayer:
                 delta = cs_15 - cs_10
                 slope = delta / 5
                 direction = "accelerating" if slope > 2 else ("decelerating" if slope < -2 else "flat")
-                parts.append(f"CS slope 10→15: {direction} ({cs_10} → {cs_15}).")
+                sections.append(SummarySection(
+                    domain="economy",
+                    statement=f"CS slope 10→15: {direction} ({cs_10} → {cs_15}).",
+                    data={"cs_10": cs_10, "cs_15": cs_15, "slope": slope, "direction": direction}
+                ))
             if gold_lead is not None:
-                parts.append(f"Gold at 15: {gold_lead:+,}.")
+                sections.append(SummarySection(
+                    domain="economy",
+                    statement=f"Gold at 15: {gold_lead:+,}.",
+                    data={"gold_lead_15": gold_lead}
+                ))
 
         # Durability structural summary
-        if engines.durability and durability:
-            heal = durability.get("total_heal", 0)
-            mit = durability.get("damage_mitigated", 0)
-            cc = durability.get("cc_time", 0)
+        if engines.durability and durability_profile:
+            heal = durability_profile.total_heal
+            mit = durability_profile.damage_mitigated
+            cc = durability_profile.cc_time
             heal_dist = engines.durability.distributions.get("total_heal")
             mit_dist = engines.durability.distributions.get("damage_mitigated")
             cc_dist = engines.durability.distributions.get("cc_time")
@@ -1385,22 +1525,42 @@ class SynthesisLayer:
             mit_band = self._assess_against_distribution(mit, mit_dist) if mit_dist else "unknown"
             cc_band = self._assess_against_distribution(cc, cc_dist) if cc_dist else "unknown"
             if heal_band in ("top_10", "top_25") and heal > 0:
-                parts.append(f"High healing: {heal//1000}k ({heal_band}).")
+                sections.append(SummarySection(
+                    domain="durability",
+                    statement=f"High healing: {heal//1000}k ({heal_band}).",
+                    data={"total_heal": heal, "band": heal_band}
+                ))
             if mit_band in ("top_10", "top_25") and mit > 0:
-                parts.append(f"High mitigation: {mit//1000}k ({mit_band}).")
+                sections.append(SummarySection(
+                    domain="durability",
+                    statement=f"High mitigation: {mit//1000}k ({mit_band}).",
+                    data={"damage_mitigated": mit, "band": mit_band}
+                ))
             if cc_band in ("top_10", "top_25") and cc > 0:
-                parts.append(f"High CC output: {cc:.0f}s ({cc_band}).")
+                sections.append(SummarySection(
+                    domain="durability",
+                    statement=f"High CC output: {cc:.0f}s ({cc_band}).",
+                    data={"cc_time": cc, "band": cc_band}
+                ))
 
         # Vision structural summary
-        if engines.vision and vision:
-            vscore = vision.get("vision_score", 0)
-            wk = vision.get("wards_killed", 0)
+        if engines.vision and vision_profile:
+            vscore = vision_profile.vision_score
+            wk = vision_profile.wards_killed
             wk_dist = engines.vision.distributions.get("wards_killed") if engines.vision else None
             wk_band = self._assess_against_distribution(wk, wk_dist) if wk_dist else "unknown"
             if wk_band in ("top_10", "top_25") and wk > 0:
-                parts.append(f"Vision activity: {wk} enemy wards cleared ({wk_band}).")
+                sections.append(SummarySection(
+                    domain="vision",
+                    statement=f"Vision activity: {wk} enemy wards cleared ({wk_band}).",
+                    data={"wards_killed": wk, "band": wk_band}
+                ))
             elif vscore > 0:
-                parts.append(f"Vision score: {vscore}.")
+                sections.append(SummarySection(
+                    domain="vision",
+                    statement=f"Vision score: {vscore}.",
+                    data={"vision_score": vscore}
+                ))
 
         # Draft structural summary
         if engines.draft:
@@ -1409,101 +1569,36 @@ class SynthesisLayer:
             if pick_pos:
                 po = pick_pos[0].features.get("pick_order", 0)
                 pos = pick_pos[0].features.get("position_label", "unknown")
-                parts.append(f"Draft: {pos} pick ({po}).")
+                sections.append(SummarySection(
+                    domain="draft",
+                    statement=f"Draft: {pos} pick ({po}).",
+                    data={"pick_order": po, "position_label": pos}
+                ))
             if side:
                 s = side[0].features.get("side", "unknown")
-                parts.append(f"Side: {s.capitalize()}.")
+                sections.append(SummarySection(
+                    domain="draft",
+                    statement=f"Side: {s.capitalize()}.",
+                    data={"side": s}
+                ))
 
-        return " ".join(parts) if parts else f"{'Win' if win else 'Loss'} on {champion}."
+        if sections:
+            return Summary(sections=sections)
+        return Summary(sections=[SummarySection(domain="general", statement=f"{'Win' if win else 'Loss'} on {champion}.", data={})])
 
 
-    def _build_explanation_multi(self, game: Game, signatures: List[EngineSignature],
-                                matched_patterns: List[str], engines: MultiEngineOutput) -> str:
-        """Build explanation from structural patterns and engine distributions."""
-        parts = []
-
-        # Explain matched patterns
-        if matched_patterns:
-            parts.append("This game matched your known patterns:")
-            for pattern_id in matched_patterns[:3]:
-                pattern = self.player_model.get_pattern(pattern_id)
-                if pattern:
-                    parts.append(f"  - {pattern_id}: {pattern.occurrence_count}x recorded, {pattern.win_rate():.0%} win rate")
-
-        # Explain structural signatures
-        sig_types = {}
-        for sig in signatures:
-            sig_types[sig.signature_type] = sig_types.get(sig.signature_type, 0) + 1
-        if sig_types:
-            parts.append(f"\nStructural signatures: {', '.join(f'{k} ({v})' for k, v in sig_types.items())}")
-
-        # Engine distribution context
-        if engines.combat:
-            combat = self._get_profile_features(signatures, "combat_profile")
-            dpm = combat.get("dpm", 0)
-            kp = combat.get("kp_pct", 0)
-            dpm_dist = engines.combat.distributions.get("damage_per_min")
-            kp_dist = engines.combat.distributions.get("kill_participation")
-            if dpm and dpm_dist and kp and kp_dist:
-                dpm_band = self._assess_against_distribution(dpm, dpm_dist)
-                parts.append(f"\nCombat: {dpm:.0f} DPM ({dpm_band.replace('_', ' ')}, avg: {dpm_dist.mean:.0f}), {kp:.0f}% KP (avg: {kp_dist.mean:.0f})")
-
-        if engines.death:
-            death_dist = engines.death.distributions.get("deaths_per_game")
-            deaths = game.deaths
-            if death_dist:
-                band = self._assess_against_distribution(deaths, death_dist)
-                parts.append(f"Deaths: {deaths} ({band.replace('_', ' ')}, avg: {death_dist.mean:.1f})")
-
-        if engines.economy:
-            cs_dist = engines.economy.distributions.get("cs_at_10")
-            cs_10 = game.cs_10
-            if cs_10 and cs_dist:
-                band = self._assess_against_distribution(cs_10, cs_dist)
-                parts.append(f"CS@10: {cs_10} ({band.replace('_', ' ')}, avg: {cs_dist.mean:.0f})")
-
-        if engines.vision:
-            vision = self._get_profile_features(signatures, "vision_profile")
-            vscore = vision.get("vision_score", 0)
-            if vscore > 0:
-                parts.append(f"Vision: score {vscore}")
-
-        if engines.durability:
-            durability = self._get_profile_features(signatures, "durability_profile")
-            heal = durability.get("total_heal", 0)
-            mit = durability.get("damage_mitigated", 0)
-            cc = durability.get("cc_time", 0)
-            if heal or mit or cc:
-                support_parts = []
-                if heal:
-                    support_parts.append(f"heal {heal//1000}k")
-                if mit:
-                    support_parts.append(f"mitigated {mit//1000}k")
-                if cc:
-                    support_parts.append(f"CC {cc:.0f}s")
-                parts.append(f"Durability: {', '.join(support_parts)}")
-
-        return "\n".join(parts) if parts else "No significant structural patterns detected in this game."
 
     def _identify_divergences_multi(self, game: Game, assessments: Dict[str, str],
-                                   engines: MultiEngineOutput) -> List[str]:
+                                   engines: MultiEngineOutput, signatures: List[EngineSignature],
+                                   combat_profile: CombatProfile, durability_profile: DurabilityProfile,
+                                   vision_profile: VisionProfile) -> List[Divergence]:
         """Identify divergences from structural patterns and distributions."""
         divergences = []
         win = game.win
 
-        # Collect signatures
-        signatures = []
-        for engine_attr in ["death", "economy", "combat", "durability", "vision", "objective", "draft"]:
-            engine_output = getattr(engines, engine_attr)
-            if engine_output:
-                signatures += self._get_engine_signatures(engine_output, game.match_id)
-
-        combat = self._get_profile_features(signatures, "combat_profile")
-        durability = self._get_profile_features(signatures, "durability_profile")
-
-        deaths = combat.get("deaths", game.deaths)
-        damage = combat.get("damage", game.damage)
-        dpm = combat.get("dpm", game.damage_per_min)
+        deaths = combat_profile.deaths
+        damage = combat_profile.damage
+        dpm = combat_profile.dpm
 
         # Win with high deaths (unusual) — death in top 25%, win
         death_dist = engines.death.distributions.get("deaths_per_game") if engines.death else None
@@ -1513,11 +1608,23 @@ class SynthesisLayer:
                 dpm_dist = engines.combat.distributions.get("damage_per_min")
                 dpm_band = self._assess_against_distribution(dpm, dpm_dist) if dpm_dist else "unknown"
                 if dpm_band in ("top_25", "top_10"):
-                    divergences.append(f"Won despite high deaths — {dpm:.0f} DPM offset {deaths} deaths")
+                    divergences.append(Divergence(
+                        divergence_type="win_high_deaths", win=True,
+                        statement=f"Won despite high deaths — {dpm:.0f} DPM offset {deaths} deaths",
+                        data={"deaths": deaths, "dpm": dpm, "dpm_band": dpm_band, "death_band": death_band}
+                    ))
                 else:
-                    divergences.append(f"Won despite high deaths ({deaths}) — team carried")
+                    divergences.append(Divergence(
+                        divergence_type="win_high_deaths_carried", win=True,
+                        statement=f"Won despite high deaths ({deaths}) — team carried",
+                        data={"deaths": deaths, "death_band": death_band}
+                    ))
             else:
-                divergences.append(f"Won despite high deaths ({deaths})")
+                divergences.append(Divergence(
+                    divergence_type="win_high_deaths", win=True,
+                    statement=f"Won despite high deaths ({deaths})",
+                    data={"deaths": deaths, "death_band": death_band}
+                ))
 
         # Loss with low deaths but low damage (invisible impact)
         if not win and death_band in ("bottom_25", "bottom_10"):
@@ -1525,28 +1632,48 @@ class SynthesisLayer:
                 dpm_dist = engines.combat.distributions.get("damage_per_min")
                 dpm_band = self._assess_against_distribution(dpm, dpm_dist) if dpm_dist else "unknown"
                 if dpm_band in ("bottom_25", "bottom_10"):
-                    divergences.append(f"Lost with low deaths ({deaths}) and low DPM ({dpm:.0f}) — no impact")
+                    divergences.append(Divergence(
+                        divergence_type="loss_low_impact", win=False,
+                        statement=f"Lost with low deaths ({deaths}) and low DPM ({dpm:.0f}) — no impact",
+                        data={"deaths": deaths, "dpm": dpm, "death_band": death_band, "dpm_band": dpm_band}
+                    ))
                 else:
-                    divergences.append(f"Lost with low deaths ({deaths}) but {dpm:.0f} DPM — couldn't convert survival")
+                    divergences.append(Divergence(
+                        divergence_type="loss_survival_no_convert", win=False,
+                        statement=f"Lost with low deaths ({deaths}) but {dpm:.0f} DPM — couldn't convert survival",
+                        data={"deaths": deaths, "dpm": dpm, "death_band": death_band}
+                    ))
             else:
-                divergences.append(f"Lost with low deaths ({deaths})")
+                divergences.append(Divergence(
+                    divergence_type="loss_low_deaths", win=False,
+                    statement=f"Lost with low deaths ({deaths})",
+                    data={"deaths": deaths, "death_band": death_band}
+                ))
 
         # Early deaths but good CS (recovery structural pattern)
         if game.early_deaths > 0 and assessments.get("cs_at_10") == "excellent":
-            divergences.append(f"CS maintained despite {game.early_deaths} early deaths")
+            divergences.append(Divergence(
+                divergence_type="cs_recovery", win=win,
+                statement=f"CS maintained despite {game.early_deaths} early deaths",
+                data={"early_deaths": game.early_deaths, "cs_assessment": assessments.get("cs_at_10", "")}
+            ))
 
         # High damage but loss — DPM in top 25%, loss
         if not win and engines.combat and dpm > 0:
             dpm_dist = engines.combat.distributions.get("damage_per_min")
             dpm_band = self._assess_against_distribution(dpm, dpm_dist) if dpm_dist else "unknown"
             if dpm_band in ("top_25", "top_10"):
-                divergences.append(f"High DPM ({dpm:.0f}) but loss — team couldn't convert {dpm:.0f} DPM into a win")
+                divergences.append(Divergence(
+                    divergence_type="high_dpm_loss", win=False,
+                    statement=f"High DPM ({dpm:.0f}) but loss — team couldn't convert {dpm:.0f} DPM into a win",
+                    data={"dpm": dpm, "dpm_band": dpm_band}
+                ))
 
         # High survival metrics but loss — heal/mit/CC in top 25%, loss
         if not win and engines.durability:
-            heal = durability.get("total_heal", 0)
-            mit = durability.get("damage_mitigated", 0)
-            cc = durability.get("cc_time", 0)
+            heal = durability_profile.total_heal
+            mit = durability_profile.damage_mitigated
+            cc = durability_profile.cc_time
             heal_dist = engines.durability.distributions.get("total_heal")
             mit_dist = engines.durability.distributions.get("damage_mitigated")
             cc_dist = engines.durability.distributions.get("cc_time")
@@ -1554,11 +1681,23 @@ class SynthesisLayer:
             mit_band = self._assess_against_distribution(mit, mit_dist) if mit_dist else "unknown"
             cc_band = self._assess_against_distribution(cc, cc_dist) if cc_dist else "unknown"
             if heal_band in ("top_25", "top_10") and heal > 0:
-                divergences.append(f"High healing ({heal//1000}k) but loss — outlasted without converting to kills")
+                divergences.append(Divergence(
+                    divergence_type="survival_no_convert", win=False,
+                    statement=f"High healing ({heal//1000}k) but loss — outlasted without converting to kills",
+                    data={"total_heal": heal, "heal_band": heal_band}
+                ))
             if mit_band in ("top_25", "top_10") and mit > 0:
-                divergences.append(f"High mitigation ({mit//1000}k) but loss — soaked damage without creating pressure")
+                divergences.append(Divergence(
+                    divergence_type="mit_no_convert", win=False,
+                    statement=f"High mitigation ({mit//1000}k) but loss — soaked damage without creating pressure",
+                    data={"damage_mitigated": mit, "mit_band": mit_band}
+                ))
             if cc_band in ("top_25", "top_10") and cc > 0:
-                divergences.append(f"High CC ({cc:.0f}s) but loss — CC didn't convert to kills")
+                divergences.append(Divergence(
+                    divergence_type="cc_no_convert", win=False,
+                    statement=f"High CC ({cc:.0f}s) but loss — CC didn't convert to kills",
+                    data={"cc_time": cc, "cc_band": cc_band}
+                ))
 
         return divergences
 
@@ -1633,12 +1772,12 @@ if __name__ == "__main__":
         print(f"=== VERDICT for {latest_game.champion} {'WIN' if latest_game.win else 'LOSS'} ===\\n")
         print(f"STATEMENT: {verdict.statement}\\n")
         print(f"CONFIDENCE: {verdict.confidence:.0%}\\n")
-        print(f"SUMMARY: {verdict.summary}\\n")
+        print(f"SUMMARY: {verdict.summary.to_text()}\\n")
         print("EVIDENCE:")
         for e in verdict.primary_evidence:
             print(f"  • {e.description}: {e.value} ({e.context})")
         print(f"\\nMATCHED PATTERNS: {', '.join(verdict.matched_patterns) if verdict.matched_patterns else 'None'}")
-        print(f"DIVERGENCES: {', '.join(verdict.divergences) if verdict.divergences else 'None'}")
+        print(f"DIVERGENCES: {', '.join(d.statement for d in verdict.divergences) if verdict.divergences else 'None'}")
         print("\\nLESSONS:")
         for lesson in verdict.lessons:
             print(f"  [{lesson.priority.upper()}] {lesson.text}")

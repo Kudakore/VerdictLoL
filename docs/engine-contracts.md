@@ -180,3 +180,59 @@ For each output channel in the Verdict, the required engine data is:
 **Divergences** (_identify_divergences_multi):
 - Need: combat distributions (damage_per_min), death distributions (deaths_per_game), durability distributions (total_heal, damage_mitigated, cc_time)
 - Need: game fields (early_deaths, turret_kills)
+
+## Typed Profile Contracts (Decomposition)
+
+Synthesis now uses typed dataclasses instead of untyped dicts for profile feature extraction:
+
+### CombatProfile (from combat_profile signature + Game fallbacks)
+| Field | Signature Key | Game Fallback |
+|---|---|---|
+| deaths | "deaths" | game.deaths |
+| damage | "damage" | game.damage |
+| dpm | "dpm" | game.damage_per_min |
+| kp_pct | "kp_pct" | game.kp_pct |
+| kills | "kills" | game.kills |
+| assists | "assists" | game.assists |
+
+### DurabilityProfile (from durability_profile signature + Game fallbacks)
+| Field | Signature Key | Game Fallback |
+|---|---|---|
+| total_heal | "total_heal" | game.total_heal |
+| damage_mitigated | "damage_mitigated" | game.damage_mitigated |
+| cc_time | "cc_time" | game.cc_time |
+| damage_shielded | "damage_shielded" | game.damage_shielded |
+
+### VisionProfile (from vision_profile signature + Game fallbacks)
+| Field | Signature Key | Game Fallback |
+|---|---|---|
+| vision_score | "vision_score" | game.vision |
+| vision_per_min | "vision_per_min" | game.vision_per_min |
+| wards_killed | "wards_killed" | game.wards_killed |
+| wards_placed | "wards_placed" | game.wards_placed |
+| control_wards | "control_wards" | game.control_wards |
+
+### SummarySection
+| Field | Description |
+|---|---|
+| domain | "death", "combat", "economy", "durability", "vision", "draft" |
+| statement | Sentence fragment for this domain |
+| data | Dict with supporting metrics for UI rendering |
+
+### Summary
+| Field | Description |
+|---|---|
+| sections | List[SummarySection] |
+| to_text() | Backward-compatible: joins section statements with spaces |
+
+### Divergence
+| Field | Description |
+|---|---|
+| divergence_type | "win_high_deaths", "loss_low_impact", "cs_recovery", "high_dpm_loss", "survival_no_convert", etc. |
+| statement | Human-readable sentence |
+| data | Dict with supporting metrics |
+| win | Whether this divergence is from a win |
+
+### Removed
+- `Verdict.explanation` — was dead data, never rendered by any consumer
+- `_build_explanation_multi()` — 66 lines of dead code removed

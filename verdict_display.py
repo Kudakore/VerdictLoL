@@ -251,13 +251,16 @@ def print_team_breakdown(game):
 
 def render_verdict(verdict):
     """Return a structured dict representation of a synthesis verdict."""
+    summary_text = verdict.summary.to_text() if hasattr(verdict.summary, 'to_text') else verdict.summary
     result = {
         "statement": verdict.statement,
         "confidence": verdict.confidence,
-        "summary": verdict.summary,
+        "summary": summary_text,
+        "summary_sections": [{"domain": s.domain, "statement": s.statement, "data": s.data} for s in verdict.summary.sections] if hasattr(verdict.summary, 'sections') else [],
         "evidence": [],
         "lessons": [],
-        "divergences": list(verdict.divergences) if verdict.divergences else [],
+        "divergences": [d.statement for d in verdict.divergences] if verdict.divergences and hasattr(verdict.divergences[0], 'statement') else list(verdict.divergences) if verdict.divergences else [],
+        "divergence_details": [{"type": d.divergence_type, "statement": d.statement, "data": d.data, "win": d.win} for d in verdict.divergences] if verdict.divergences and hasattr(verdict.divergences[0], 'divergence_type') else [],
         "drill_down_prompt": verdict.drill_down_prompt if verdict.drill_down_available else None,
         "cluster_label": verdict.cluster_label,
         "mechanism": verdict.mechanism,
@@ -295,7 +298,8 @@ def print_synthesis_block(verdict):
     print(f"  ╚{'═'*60}╝")
     print(f"\n  Confidence: {verdict.confidence:.0%}")
     if verdict.summary:
-        print(f"\n  {verdict.summary}")
+        summary_text = verdict.summary.to_text() if hasattr(verdict.summary, 'to_text') else verdict.summary
+        print(f"\n  {summary_text}")
 
     if verdict.primary_evidence:
         print(f"\n  Evidence:")
@@ -316,7 +320,8 @@ def print_synthesis_block(verdict):
     if verdict.divergences:
         print(f"\n  Divergences from your pattern:")
         for div in verdict.divergences:
-            print(f"    • {div}")
+            text = div.statement if hasattr(div, 'statement') else div
+            print(f"    • {text}")
 
     if verdict.drill_down_available:
         print(f"\n  Drill-down: {verdict.drill_down_prompt}")
