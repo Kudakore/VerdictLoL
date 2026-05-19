@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
+from verdict_game_model import Game
+
 
 # ────────────────────────────────────────────────────────────────
 # Fingerprint Dataclasses
@@ -93,17 +95,17 @@ class SimilarityEngine:
 
     def __init__(self):
         self.player_id: str = ""
-        self.games: List[Dict] = []
+        self.games: List[Game] = []
         self.fingerprints: List[GameFingerprint] = []
         self._distributions: Dict[str, List[float]] = {}
         self._last_output: Optional["SimilarityOutput"] = None
 
-    def analyze(self, games: List[Dict]) -> "SimilarityOutput":
+    def analyze(self, games: List[Game]) -> "SimilarityOutput":
         """
         Build fingerprints for all games. Call once per session.
         """
         self.games = games
-        self.player_id = games[0].get("puuid", "") if games else ""
+        self.player_id = games[0].puuid if games else ""
         self.fingerprints = []
         self._distributions = {}
 
@@ -129,7 +131,7 @@ class SimilarityEngine:
         self._last_output = result
         return result
 
-    def _compute_distributions(self, games: List[Dict]):
+    def _compute_distributions(self, games: List[Game]):
         """Pre-compute all distributions for normalization."""
         raw_data = {
             "kills_pm": [],
@@ -145,39 +147,39 @@ class SimilarityEngine:
         }
 
         for g in games:
-            dur = max(g.get("duration_min", 1), 1)
-            kills = g.get("kills", 0) or 0
-            assists = g.get("assists", 0) or 0
-            damage = g.get("damage", 0) or 0
+            dur = max(g.duration_min, 1)
+            kills = g.kills or 0
+            assists = g.assists or 0
+            damage = g.damage or 0
 
             raw_data["kills_pm"].append(kills / dur)
             raw_data["assists_pm"].append(assists / dur)
             raw_data["damage_pm"].append(damage / dur)
-            raw_data["cs_pm"].append(g.get("cs_per_min", 0) or 0)
-            raw_data["cs_10"].append(g.get("cs_10", 0) or 0)
-            raw_data["turret_kills"].append(g.get("turret_kills", 0) or 0)
-            raw_data["lks"].append(g.get("largest_killing_spree", 0) or 0)
-            raw_data["gold_lead_15"].append(g.get("gold_lead_15", 0) or 0)
-            raw_data["vision_pm"].append(g.get("vision_per_min", 0) or 0)
-            raw_data["wards_placed"].append(g.get("wards_placed", 0) or 0)
+            raw_data["cs_pm"].append(g.cs_per_min or 0)
+            raw_data["cs_10"].append(g.cs_10 or 0)
+            raw_data["turret_kills"].append(g.turret_kills or 0)
+            raw_data["lks"].append(g.largest_killing_spree or 0)
+            raw_data["gold_lead_15"].append(g.gold_lead_15 or 0)
+            raw_data["vision_pm"].append(g.vision_per_min or 0)
+            raw_data["wards_placed"].append(g.wards_placed or 0)
 
         self._distributions = raw_data
 
-    def _extract_fingerprint(self, game: Dict) -> GameFingerprint:
+    def _extract_fingerprint(self, game: Game) -> GameFingerprint:
         """Build a 5-D fingerprint for one game."""
-        dur = max(game.get("duration_min", 1), 1)
+        dur = max(game.duration_min, 1)
 
         # Raw components
-        kills_pm = (game.get("kills", 0) or 0) / dur
-        assists_pm = (game.get("assists", 0) or 0) / dur
-        damage_pm = (game.get("damage", 0) or 0) / dur
-        cs_pm = game.get("cs_per_min", 0) or 0
-        cs_10 = game.get("cs_10", 0) or 0
-        turret_kills = game.get("turret_kills", 0) or 0
-        lks = game.get("largest_killing_spree", 0) or 0
-        gold_lead_15 = game.get("gold_lead_15", 0) or 0
-        vision_pm = game.get("vision_per_min", 0) or 0
-        wards_placed = game.get("wards_placed", 0) or 0
+        kills_pm = (game.kills or 0) / dur
+        assists_pm = (game.assists or 0) / dur
+        damage_pm = (game.damage or 0) / dur
+        cs_pm = game.cs_per_min or 0
+        cs_10 = game.cs_10 or 0
+        turret_kills = game.turret_kills or 0
+        lks = game.largest_killing_spree or 0
+        gold_lead_15 = game.gold_lead_15 or 0
+        vision_pm = game.vision_per_min or 0
+        wards_placed = game.wards_placed or 0
 
         # Dimension 1: Aggression — fight intensity
         agg_k = _percentile_rank(kills_pm, self._distributions["kills_pm"])
@@ -209,9 +211,9 @@ class SimilarityEngine:
         vision = (vis_vpm * 0.6 + vis_wp * 0.4)
 
         return GameFingerprint(
-            match_id=game.get("match_id", ""),
-            champion=game.get("champion", ""),
-            win=game.get("win", False),
+            match_id=game.match_id,
+            champion=game.champion,
+            win=game.win,
             duration_min=dur,
             aggression=round(aggression, 4),
             efficiency=round(efficiency, 4),
@@ -237,7 +239,7 @@ class SimilarityEngine:
         """
         target_idx = None
         for i, g in enumerate(self.games):
-            if g.get("match_id") == match_id:
+            if g.match_id == match_id:
                 target_idx = i
                 break
 
@@ -287,7 +289,7 @@ class SimilarityEngine:
 
         Usage:
             result = engine.matched_comparison(
-                signal_fn=lambda g: g.get('deaths', 0) >= 8,
+                signal_fn=lambda g: g.deaths >= 8,
                 k=30
             )
         """
@@ -332,13 +334,13 @@ class SimilarityEngine:
             matched_without.update(match_set)
 
         # Compute win rates
-        wins_with = sum(1 for i in games_with if self.games[i].get("win", False))
+        wins_with = sum(1 for i in games_with if self.games[i].win)
         wr_with = wins_with / len(games_with)
 
-        wins_matched_with = sum(1 for i in matched_with if self.games[i].get("win", False))
+        wins_matched_with = sum(1 for i in matched_with if self.games[i].win)
         wr_matched = wins_matched_with / len(matched_with) if matched_with else 0.5
 
-        wins_without = sum(1 for i in games_without if self.games[i].get("win", False))
+        wins_without = sum(1 for i in games_without if self.games[i].win)
         wr_without = wins_without / len(games_without)
 
         delta = wr_with - wr_matched  # signal's impact controlling for fingerprint
@@ -463,16 +465,16 @@ class SimilarityEngine:
 
         # Build (sig1_name, sig2_name) -> set of match_ids where both fired
         # only from losing games
-        losing_games = [g for g in self.games if not g.get("win", False)]
+        losing_games = [g for g in self.games if not g.win]
         if len(losing_games) < 20:
             return []  # not enough losing data
 
-        losing_match_ids = {g.get("match_id") for g in losing_games}
+        losing_match_ids = {g.match_id for g in losing_games}
 
         # Count co-occurrences: for each pair, how many losing games had both?
         pair_counts: Dict[Tuple[str, str], int] = {}
         for g in losing_games:
-            mid = g.get("match_id")
+            mid = g.match_id
             active_signals = set()
             for q in queries:
                 if q.signal_fn(g):
@@ -490,7 +492,7 @@ class SimilarityEngine:
         # Build index: match_id -> set of signal names fired
         game_signals: Dict[str, Set[str]] = {}
         for g in self.games:
-            mid = g.get("match_id")
+            mid = g.match_id
             active = set()
             for q in queries:
                 if q.signal_fn(g):
@@ -873,7 +875,7 @@ class SimilarityEngine:
         else:
             return f"{base} — NEUTRAL TYPE"
 
-    def _compute_confidence(self, games: List[Dict]) -> float:
+    def _compute_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         return min(len(games) / 50, 0.95)
@@ -950,56 +952,56 @@ def _build_signal_queries() -> List[SignalQuery]:
     queries.append(SignalQuery(
         name="8+ deaths",
         description="Died 8 or more times in a game",
-        signal_fn=lambda g: (g.get("deaths") or 0) >= 8,
+        signal_fn=lambda g: g.deaths >= 8,
         min_games=20,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="5+ deaths",
         description="Died 5 or more times in a game",
-        signal_fn=lambda g: (g.get("deaths") or 0) >= 5,
+        signal_fn=lambda g: g.deaths >= 5,
         min_games=30,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="3+ early deaths",
         description="Died 3 or more times before 10 minutes",
-        signal_fn=lambda g: (g.get("early_deaths") or 0) >= 3,
+        signal_fn=lambda g: g.early_deaths >= 3,
         min_games=30,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="Gold deficit early",
         description="Gold deficit of 500+ at 15 minutes",
-        signal_fn=lambda g: (g.get("gold_lead_15") or 0) <= -500,
+        signal_fn=lambda g: (g.gold_lead_15 or 0) <= -500,
         min_games=20,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="CS deficit early",
         description="Fewer than 35 CS at 10 minutes",
-        signal_fn=lambda g: (g.get("cs_10") or 0) < 35,
+        signal_fn=lambda g: (g.cs_10 or 0) < 35,
         min_games=15,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="CS deficit mid",
         description="Fewer than 80 CS at 15 minutes",
-        signal_fn=lambda g: (g.get("cs_15") or 0) < 80,
+        signal_fn=lambda g: (g.cs_15 or 0) < 80,
         min_games=15,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="Low vision (total <30)",
         description="Total vision score below 30",
-        signal_fn=lambda g: (g.get("vision") or 0) < 30 and (g.get("vision") or 0) > 0,
+        signal_fn=lambda g: 0 < g.vision < 30,
         min_games=15,
         category="harmful"
     ))
     queries.append(SignalQuery(
         name="Blue side",
         description="Playing on blue side",
-        signal_fn=lambda g: g.get("side") == "blue",
+        signal_fn=lambda g: g.side == "blue",
         min_games=30,
         category="neutral"  # direction TBD by result
     ))
@@ -1008,49 +1010,49 @@ def _build_signal_queries() -> List[SignalQuery]:
     queries.append(SignalQuery(
         name="Gold lead early",
         description="Gold lead of 500+ at 15 minutes",
-        signal_fn=lambda g: (g.get("gold_lead_15") or 0) >= 500,
+        signal_fn=lambda g: (g.gold_lead_15 or 0) >= 500,
         min_games=20,
         category="helpful"
     ))
     queries.append(SignalQuery(
         name="Gold lead mid",
         description="Gold lead of 1000+ at 15 minutes",
-        signal_fn=lambda g: (g.get("gold_lead_15") or 0) >= 1000,
+        signal_fn=lambda g: (g.gold_lead_15 or 0) >= 1000,
         min_games=10,
         category="helpful"
     ))
     queries.append(SignalQuery(
         name="2+ turret kills",
         description="Took down 2 or more turrets",
-        signal_fn=lambda g: (g.get("turret_kills") or 0) >= 2,
+        signal_fn=lambda g: g.turret_kills >= 2,
         min_games=20,
         category="helpful"
     ))
     queries.append(SignalQuery(
         name="High kill participation",
         description="Kill participation 60% or higher",
-        signal_fn=lambda g: (g.get("kp_pct") or 0) >= 0.60 and (g.get("kp_pct") or 0) < 1.0,
+        signal_fn=lambda g: 0.60 <= g.kp_pct < 1.0,
         min_games=15,
         category="helpful"
     ))
     queries.append(SignalQuery(
         name="0-2 deaths (low deaths)",
         description="Died 2 or fewer times — survived well",
-        signal_fn=lambda g: (g.get("deaths") or 0) <= 2,
+        signal_fn=lambda g: g.deaths <= 2,
         min_games=20,
         category="helpful"
     ))
     queries.append(SignalQuery(
         name="Snowball lead (largest_killing_spree >= 4)",
         description="Had a killing spree of 4+ — were snowballing",
-        signal_fn=lambda g: (g.get("largest_killing_spree") or 0) >= 4,
+        signal_fn=lambda g: g.largest_killing_spree >= 4,
         min_games=20,
         category="helpful"
     ))
     queries.append(SignalQuery(
         name="Vision heavy (vision >= 40)",
         description="Vision score of 40 or higher",
-        signal_fn=lambda g: (g.get("vision") or 0) >= 40,
+        signal_fn=lambda g: g.vision >= 40,
         min_games=15,
         category="helpful"
     ))
@@ -1078,7 +1080,7 @@ class SimilarityOutput:
     timestamp: datetime
     total_games: int
     fingerprints: List[GameFingerprint]
-    games: List[Dict]                    # Raw game dicts for matched comparison
+    games: List[Game]                    # Game objects for matched comparison
     distributions: Dict[str, List[float]]
     confidence: float
     clusters: List["ClusterResult"] = field(default_factory=list)

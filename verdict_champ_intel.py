@@ -10,6 +10,8 @@ import re
 import json
 from collections import defaultdict
 
+from verdict_game_model import Game
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -459,8 +461,8 @@ def get_matchup_context(my_champion, enemy_champion, game_data=None):
         context["threat_assessment"] = f"No intel profile found for {enemy_champion}."
         # Pick order context
     if game_data:
-        my_pick = game_data.get("pick_order")
-        en_pick = game_data.get("enemy_pick_order")
+        my_pick = game_data.pick_order
+        en_pick = game_data.enemy_pick_order
         if my_pick and en_pick:
             if en_pick < my_pick:
                 context["pick_context"] = f"{enemy_champion} was picked before you (pick {en_pick} vs your pick {my_pick}). You had information and chose this matchup."
@@ -574,9 +576,9 @@ def get_counter_recommendations(enemy_champion, my_game_history=None):
         from collections import defaultdict
         champ_vs_enemy = defaultdict(lambda: {"wins": 0, "losses": 0})
         for g in my_game_history:
-            if g.get("enemy", {}).get("champion") == enemy_champion:
-                my_champ = g["champion"]
-                if g["win"]:
+            if g.enemy and g.enemy.champion == enemy_champion:
+                my_champ = g.champion
+                if g.win:
                     champ_vs_enemy[my_champ]["wins"] += 1
                 else:
                     champ_vs_enemy[my_champ]["losses"] += 1
@@ -609,34 +611,23 @@ def get_counter_recommendations(enemy_champion, my_game_history=None):
 # OUTPUT FORMATTERS
 # ─────────────────────────────────────────────
 
-def print_matchup_context(context, indent="  "):
-    """Print matchup context block for use in per-game output."""
+def render_matchup_context(context):
+    """Return structured matchup context data for display."""
     enemy = context["enemy_champion"]
     enemy_intel = context.get("enemy_intel")
-
     if not enemy_intel:
-        print(f"{indent}No champion intel available for {enemy}.")
-        return
+        return {"enemy_champion": enemy, "has_intel": False}
 
     signals = enemy_intel.get("signals", {})
-    archetype = enemy_intel.get("archetype", "")
-    style = enemy_intel.get("style_num")
     ratings = enemy_intel.get("ratings", {})
 
-    print(f"{indent}── MATCHUP CONTEXT — {enemy} {'─'*35}")
-    print()
-    print(f"{indent}Archetype:     {archetype}")
-    print(f"{indent}Threat Window: {context['threat_window']}")
-    print(f"{indent}Invade Risk:   {signals.get('invade_threat_level', 'UNKNOWN')}")
-
+    cc_types = []
     if signals.get("hard_cc"):
-        # Clean up CC list for display
-        cc_types = []
         if signals.get("has_suppression"):
             cc_types.append("Suppression (R)")
-        elif "stun" in " ".join(signals["hard_cc"]) or "stuns" in " ".join(signals["hard_cc"]):
+        elif any(k in " ".join(signals["hard_cc"]) for k in ("stun", "stuns")):
             cc_types.append("Stun")
-        elif "knock up" in " ".join(signals["hard_cc"]) or "knocks up" in " ".join(signals["hard_cc"]):
+        elif any(k in " ".join(signals["hard_cc"]) for k in ("knock up", "knocks up")):
             cc_types.append("Knockup")
         elif "fear" in " ".join(signals["hard_cc"]):
             cc_types.append("Fear")
@@ -644,59 +635,67 @@ def print_matchup_context(context, indent="  "):
             cc_types.append("Pull")
         else:
             cc_types.append("Hard CC")
-        if signals.get("soft_cc"):
-            cc_types.append("Slow")
-        print(f"{indent}CC Types:      {', '.join(cc_types)}")
+    if signals.get("soft_cc"):
+        cc_types.append("Slow")
+
+    return {
+        "enemy_champion": enemy,
+        "has_intel": True,
+        "archetype": enemy_intel.get("archetype", ""),
+        "threat_window": context["threat_window"],
+        "invade_risk": signals.get("invade_threat_level", "UNKNOWN"),
+        "cc_types": cc_types,
+        "key_mechanic": context["key_mechanic"],
+        "win_condition": context["your_win_condition"],
+        "invade_assessment": context["invade_risk"],
+        "pick_context": context.get("pick_context", ""),
+        "notes": context.get("notes", []),
+    }
+
+
+def print_matchup_context(context, indent="  "):
+    data = render_matchup_context(context)
+    enemy = data["enemy_champion"]
+
+    if not data["has_intel"]:
+        print(f"{indent}No champion intel available for {enemy}.")
+        return
+
+    print(f"{indent}── MATCHUP CONTEXT — {enemy} {'─'*35}")
+    print()
+    print(f"{indent}Archetype:     {data['archetype']}")
+    print(f"{indent}Threat Window: {data['threat_window']}")
+    print(f"{indent}Invade Risk:   {data['invade_risk']}")
+
+    if data["cc_types"]:
+        print(f"{indent}CC Types:      {', '.join(data['cc_types'])}")
 
     print()
-    print(f"{indent}{context['key_mechanic']}")
+    print(f"{indent}{data['key_mechanic']}")
     print()
-    print(f"{indent}Your win condition: {context['your_win_condition']}")
+    print(f"{indent}Your win condition: {data['win_condition']}")
     print()
-    print(f"{indent}Invade assessment: {context['invade_risk']}")
+    print(f"{indent}Invade assessment: {data['invade_assessment']}")
 
-    if context.get("pick_context"):
-        print(f"{indent}Draft:     {context['pick_context']}")
+    if data["pick_context"]:
+        print(f"{indent}Draft:     {data['pick_context']}")
 
-    if context["notes"]:
+    if data["notes"]:
         print()
-        for note in context["notes"]:
+        for note in data["notes"]:
             print(f"{indent}⚠  {note}")
 
     print()
 
-def print_counter_command(enemy_champion, game_history=None):
-    """Full output for verdict counter [champion]."""
+
+def analyze_counter_command(enemy_champion, game_history=None):
+    """Analyze counter recommendations. Returns structured dict with all counter data."""
     rec = get_counter_recommendations(enemy_champion, my_game_history=game_history)
-
     if "error" in rec:
-        print(f"\n  {rec['error']}")
-        return
+        return {"error": rec["error"]}
 
-    print(f"\n  {'='*62}")
-    print(f"  VERDICT COUNTER — {enemy_champion}")
-    print(f"  {'='*62}")
-    print(f"  Archetype: {rec['archetype']}")
-    print(f"  Threat Window: {rec['threat_window']}")
-    print(f"  Invade Risk: {rec['invade_risk']}")
-    print()
-
-    print(f"  ── KEY MECHANIC {'─'*47}")
-    print(f"  {rec['key_mechanic']}")
-    print()
-
-    if rec["strengths"]:
-        print(f"  ── WHAT THEY HAVE {'─'*44}")
-        for s in rec["strengths"]:
-            print(f"  + {s}")
-        print()
-
-    if rec["weaknesses"]:
-        print(f"  ── HOW TO BEAT THEM {'─'*42}")
-        for w in rec["weaknesses"]:
-            print(f"  → {w}")
-        print()
-
+    # Item recommendations (computed from intel)
+    item_recs = []
     intel = load_champion_intel(enemy_champion)
     if intel:
         sig = intel.get("signals", {})
@@ -704,31 +703,65 @@ def print_counter_command(enemy_champion, game_history=None):
         archetype = intel.get("archetype", "")
         damage_type = intel.get("damage_type", "")
         threat_window = sig.get("threat_window", "")
-        recs = []
         if sig.get("has_healing"):
-            recs.append("Grievous Wounds (Thornmail / Mortal Reminder / Chempunk Chainsword) — cuts their healing by 40%")
+            item_recs.append("Grievous Wounds (Thornmail / Mortal Reminder / Chempunk Chainsword) — cuts their healing by 40%")
         if "Tank" in tags or intel.get("ratings", {}).get("durability", 0) >= 3:
-            recs.append("Armor penetration (Lord Dominik's Regards / Serylda's Grudge) — bypasses their mitigation")
+            item_recs.append("Armor penetration (Lord Dominik's Regards / Serylda's Grudge) — bypasses their mitigation")
         if damage_type in ("Magic", "Mixed"):
-            recs.append("Magic penetration (Void Staff / Shadowflame) — essential if they stack MR")
+            item_recs.append("Magic penetration (Void Staff / Shadowflame) — essential if they stack MR")
         if sig.get("has_suppression") or len(sig.get("hard_cc", [])) >= 2:
-            recs.append("Tenacity (Mercury's Treads / Sterak's Gage) — reduces hard CC duration")
+            item_recs.append("Tenacity (Mercury's Treads / Sterak's Gage) — reduces hard CC duration")
         archetype_lower = archetype.lower()
         if any(k in archetype_lower for k in ("assassin", "diver", "skirmisher")):
-            recs.append("Armor (Randuin's Omen / Frozen Heart) — reduces burst from physical threats")
+            item_recs.append("Armor (Randuin's Omen / Frozen Heart) — reduces burst from physical threats")
         if sig.get("early_threat") or (threat_window and "level" in threat_window.lower()):
-            recs.append("Early survivability — avoid fighting them levels 3-5. Clear safely and scale.")
-        print(f"  ── RECOMMENDED ITEMS {'─'*41}")
-        if recs:
-            for r in recs:
-                print(f"  → {r}")
-        else:
-            print(f"  No specific item counters identified. Standard build applies.")
+            item_recs.append("Early survivability — avoid fighting them levels 3-5. Clear safely and scale.")
+
+    return {**rec, "item_recommendations": item_recs}
+
+
+def print_counter_command(enemy_champion, game_history=None):
+    result = analyze_counter_command(enemy_champion, game_history=game_history)
+
+    if "error" in result:
+        print(f"\n  {result['error']}")
+        return
+
+    print(f"\n  {'='*62}")
+    print(f"  VERDICT COUNTER — {enemy_champion}")
+    print(f"  {'='*62}")
+    print(f"  Archetype: {result['archetype']}")
+    print(f"  Threat Window: {result['threat_window']}")
+    print(f"  Invade Risk: {result['invade_risk']}")
+    print()
+
+    print(f"  ── KEY MECHANIC {'─'*47}")
+    print(f"  {result['key_mechanic']}")
+    print()
+
+    if result["strengths"]:
+        print(f"  ── WHAT THEY HAVE {'─'*44}")
+        for s in result["strengths"]:
+            print(f"  + {s}")
         print()
 
-    if rec["personal_recs"]:
+    if result["weaknesses"]:
+        print(f"  ── HOW TO BEAT THEM {'─'*42}")
+        for w in result["weaknesses"]:
+            print(f"  → {w}")
+        print()
+
+    print(f"  ── RECOMMENDED ITEMS {'─'*41}")
+    if result["item_recommendations"]:
+        for r in result["item_recommendations"]:
+            print(f"  → {r}")
+    else:
+        print(f"  No specific item counters identified. Standard build applies.")
+    print()
+
+    if result["personal_recs"]:
         print(f"  ── YOUR PERSONAL DATA vs {enemy_champion} {'─'*28}")
-        for p in rec["personal_recs"]:
+        for p in result["personal_recs"]:
             bar = "✓" if p["winrate"] >= 50 else "✗"
             print(f"  {bar} {p['champion']:<18} {p['wins']}W {p['losses']}L  ({p['winrate']}% WR across {p['games']} games)")
         print()
@@ -740,93 +773,17 @@ def print_counter_command(enemy_champion, game_history=None):
     print(f"  {'='*62}")
     print()
 
-def print_intel_profile(champion_name):
-    """Full intel profile for a champion — verdict intel [champion]."""
+
+def analyze_intel_profile(champion_name):
+    """Analyze champion intel profile. Returns structured dict with all profile data."""
     intel = load_champion_intel(champion_name)
     if not intel:
-        print(f"\n  No intel profile found for {champion_name}.")
-        print(f"  Run 'face update' to refresh the vault.")
-        return
+        return {"found": False, "champion_name": champion_name}
 
     signals = intel.get("signals", {})
     ratings = intel.get("ratings", {})
-    abilities = intel.get("abilities", [])
 
-    print(f"\n  {'='*62}")
-    print(f"  CHAMPION INTEL — {intel['name']}")
-    print(f"  {intel['title']}")
-    print(f"  {'='*62}")
-    print()
-    print(f"  Archetype:    {intel['archetype']}  (Style {intel['style_num']})")
-    print(f"  Damage Type:  {intel['damage_type']}")
-    print(f"  Attack Type:  {intel['attack_type'].capitalize()}")
-    print(f"  Difficulty:   {intel['difficulty']}")
-    print(f"  Roles:        {', '.join(r.capitalize() for r in intel['roles'])}")
-    print()
-
-    print(f"  ── PLAYSTYLE RATINGS {'─'*41}")
-    for key, label in [("damage","Damage"),("durability","Durability"),
-                       ("cc","Crowd Control"),("mobility","Mobility"),("utility","Utility")]:
-        val = ratings.get(key, 0)
-        bar = "█" * val + "░" * (3 - val)
-        tier = ["","Low","Medium","High"][val] if val else "N/A"
-        print(f"  {label:<15} {bar}  {tier}")
-    print()
-
-    print(f"  ── THREAT SIGNALS {'─'*44}")
-    print(f"  Threat Window:  {signals.get('threat_window', 'Unknown')}")
-    print(f"  Invade Risk:    {signals.get('invade_threat_level', 'UNKNOWN')}")
-    if signals.get("has_suppression"):
-        print(f"  Suppression:    YES — ult cannot be escaped with flash")
-    if signals.get("has_healing"):
-        print(f"  Built-in Heal:  YES — anti-healing reduces effectiveness")
-    if signals.get("resourceless"):
-        print(f"  Resourceless:   YES — no mana constraint on ability usage")
-    if signals.get("hard_cc"):
-        print(f"  Hard CC:        {len(signals['hard_cc'])} type(s) detected")
-    print()
-
-    print(f"  ── KEY MECHANIC {'─'*46}")
-    print(f"  {signals.get('key_mechanic', 'No key mechanic derived.')}")
-    print()
-
-    print(f"  ── ABILITIES {'─'*49}")
-    passive = intel.get("passive", {})
-    if passive.get("name"):
-        print(f"  P  {passive['name']}")
-        desc = passive.get("description", "")
-        if desc:
-            # Wrap at 60 chars
-            words = desc.split()
-            line = "     "
-            for word in words:
-                if len(line) + len(word) + 1 > 65:
-                    print(line)
-                    line = "     " + word
-                else:
-                    line = line + " " + word if line.strip() else "     " + word
-            if line.strip():
-                print(line)
-        print()
-
-    for ab in abilities:
-        cd = f"  CD: {ab['cooldown']}s" if ab.get("cooldown") else ""
-        rng = f"  Range: {ab['range']}" if ab.get("range") else ""
-        print(f"  {ab['slot']}  {ab['name']}{cd}{rng}")
-        desc = ab.get("description", "")
-        if desc:
-            words = desc.split()
-            line = "     "
-            for word in words:
-                if len(line) + len(word) + 1 > 65:
-                    print(line)
-                    line = "     " + word
-                else:
-                    line = line + " " + word if line.strip() else "     " + word
-            if line.strip():
-                print(line)
-        print()
-
+    # Derive countered_by and counters
     countered_by = []
     counters = []
 
@@ -852,15 +809,198 @@ def print_intel_profile(champion_name):
     if signals.get("has_healing"):
         counters.append("Squishy carries without sustain — outlasts them through healing")
 
-    if countered_by:
+    # Format abilities for display
+    abilities = []
+    passive = intel.get("passive", {})
+    if passive.get("name"):
+        abilities.append({
+            "slot": "P", "name": passive["name"],
+            "description": passive.get("description", ""),
+            "cooldown": "", "range": "",
+        })
+    for ab in intel.get("abilities", []):
+        abilities.append({
+            "slot": ab["slot"], "name": ab["name"],
+            "description": ab.get("description", ""),
+            "cooldown": ab.get("cooldown", ""), "range": ab.get("range", ""),
+        })
+
+    return {
+        "found": True,
+        "name": intel.get("name", ""),
+        "title": intel.get("title", ""),
+        "archetype": intel.get("archetype", ""),
+        "style_num": intel.get("style_num"),
+        "damage_type": intel.get("damage_type", ""),
+        "attack_type": intel.get("attack_type", ""),
+        "difficulty": intel.get("difficulty", ""),
+        "roles": intel.get("roles", []),
+        "ratings": ratings,
+        "signals": signals,
+        "abilities": abilities,
+        "countered_by": countered_by,
+        "counters": counters,
+    }
+
+
+def _wrap_text(text, width=60, indent="     "):
+    """Word-wrap text for terminal display."""
+    words = text.split()
+    lines = []
+    line = indent
+    for word in words:
+        if len(line) + len(word) + 1 > width + len(indent):
+            lines.append(line)
+            line = indent + word
+        else:
+            line = line + " " + word if line.strip() else indent + word
+    if line.strip():
+        lines.append(line)
+    return "\n".join(lines)
+
+
+# ── Champion Base Stats ──────────────────────────────────────────────
+
+STAT_LABELS = {
+    "hp": "Base HP",
+    "hpperlevel": "HP per Level",
+    "mp": "Base Mana",
+    "mpperlevel": "Mana per Level",
+    "movespeed": "Move Speed",
+    "armor": "Base Armor",
+    "armorperlevel": "Armor per Level",
+    "spellblock": "Magic Resist",
+    "spellblockperlevel": "MR per Level",
+    "attackrange": "Attack Range",
+    "hpregen": "HP Regen",
+    "hpregenperlevel": "HP Regen per Level",
+    "mpregen": "Mana Regen",
+    "mpregenperlevel": "Mana Regen per Level",
+    "attackdamage": "Base AD",
+    "attackdamageperlevel": "AD per Level",
+    "attackspeedperlevel": "AS per Level",
+    "attackspeed": "Base AS",
+    "crit": "Crit Chance",
+    "critperlevel": "Crit per Level",
+}
+
+def print_champ_stats(champion):
+    """Print champion base stats from LeagueVault."""
+    import os
+    from verdict_paths import VAULT_PATH
+
+    query_lower = champion.lower()
+    vault_path = VAULT_PATH
+
+    files = os.listdir(vault_path)
+    exact = [f for f in files if f.lower() == f"{query_lower}.md"]
+    starts = [f for f in files if f.lower().startswith(query_lower)]
+    contains = [f for f in files if query_lower in f.lower() and len(query_lower) >= 4]
+
+    matches = exact or starts or contains
+    if not matches:
+        print(f"No champion found matching '{champion}'")
+        return
+
+    champ_file = os.path.join(vault_path, matches[0])
+    with open(champ_file, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    name = ""
+    title = ""
+    tags = ""
+    stats = {}
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith("# "):
+            name = line[2:]
+        elif line.startswith("**Title:**"):
+            title = line.replace("**Title:**", "").strip()
+        elif line.startswith("**Tags:**"):
+            tags = line.replace("**Tags:**", "").strip()
+        elif line.startswith("- **") and ":**" in line:
+            inner = line[4:]
+            if ":**" in inner:
+                label, val = inner.split(":**", 1)
+                stats[label.strip().lower().replace(" ", "")] = val.strip()
+
+    print(f"\n  {'='*45}")
+    print(f"  {name} — {title}")
+    print(f"  Tags: {tags}")
+    print(f"  {'='*45}")
+    for key, label in STAT_LABELS.items():
+        val = stats.get(key) or stats.get(key.replace("perlevel", "perlevel"))
+        if val:
+            print(f"  {label:<22} {val}")
+    print()
+
+
+def print_intel_profile(champion_name):
+    result = analyze_intel_profile(champion_name)
+
+    if not result["found"]:
+        print(f"\n  No intel profile found for {champion_name}.")
+        print(f"  Run 'face update' to refresh the vault.")
+        return
+
+    print(f"\n  {'='*62}")
+    print(f"  CHAMPION INTEL — {result['name']}")
+    print(f"  {result['title']}")
+    print(f"  {'='*62}")
+    print()
+    print(f"  Archetype:    {result['archetype']}  (Style {result['style_num']})")
+    print(f"  Damage Type:  {result['damage_type']}")
+    print(f"  Attack Type:  {result['attack_type'].capitalize()}")
+    print(f"  Difficulty:   {result['difficulty']}")
+    print(f"  Roles:        {', '.join(r.capitalize() for r in result['roles'])}")
+    print()
+
+    print(f"  ── PLAYSTYLE RATINGS {'─'*41}")
+    for key, label in [("damage","Damage"),("durability","Durability"),
+                       ("cc","Crowd Control"),("mobility","Mobility"),("utility","Utility")]:
+        val = result["ratings"].get(key, 0)
+        bar = "█" * val + "░" * (3 - val)
+        tier = ["","Low","Medium","High"][val] if val else "N/A"
+        print(f"  {label:<15} {bar}  {tier}")
+    print()
+
+    sig = result["signals"]
+    print(f"  ── THREAT SIGNALS {'─'*44}")
+    print(f"  Threat Window:  {sig.get('threat_window', 'Unknown')}")
+    print(f"  Invade Risk:    {sig.get('invade_threat_level', 'UNKNOWN')}")
+    if sig.get("has_suppression"):
+        print(f"  Suppression:    YES — ult cannot be escaped with flash")
+    if sig.get("has_healing"):
+        print(f"  Built-in Heal:  YES — anti-healing reduces effectiveness")
+    if sig.get("resourceless"):
+        print(f"  Resourceless:   YES — no mana constraint on ability usage")
+    if sig.get("hard_cc"):
+        print(f"  Hard CC:        {len(sig['hard_cc'])} type(s) detected")
+    print()
+
+    print(f"  ── KEY MECHANIC {'─'*46}")
+    print(f"  {sig.get('key_mechanic', 'No key mechanic derived.')}")
+    print()
+
+    print(f"  ── ABILITIES {'─'*49}")
+    for ab in result["abilities"]:
+        cd = f"  CD: {ab['cooldown']}s" if ab.get("cooldown") else ""
+        rng = f"  Range: {ab['range']}" if ab.get("range") else ""
+        print(f"  {ab['slot']}  {ab['name']}{cd}{rng}")
+        if ab.get("description"):
+            print(_wrap_text(ab["description"]))
+        print()
+
+    if result["countered_by"]:
         print(f"  ── COUNTERED BY {'─'*46}")
-        for item in countered_by:
+        for item in result["countered_by"]:
             print(f"  → {item}")
         print()
 
-    if counters:
+    if result["counters"]:
         print(f"  ── COUNTERS {'─'*50}")
-        for item in counters:
+        for item in result["counters"]:
             print(f"  → {item}")
         print()
 

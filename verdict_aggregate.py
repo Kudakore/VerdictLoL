@@ -8,6 +8,7 @@ Replaces legacy run_analysis for print_worst, print_best, print_pool.
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 
+from verdict_game_model import Game
 from verdict_engine_base import EngineOutput
 from verdict_engine_cache import load_engine_outputs, save_engine_outputs
 from verdict_engine_death import run_death_engine
@@ -22,14 +23,14 @@ from verdict_similarity import SimilarityEngine
 from verdict_player_model import get_or_create_player_model
 
 
-def _winrate(games: List[Dict]) -> Optional[float]:
+def _winrate(games: List[Game]) -> Optional[float]:
     if not games:
         return None
-    return round(sum(1 for g in games if g["win"]) / len(games) * 100, 1)
+    return round(sum(1 for g in games if g.win) / len(games) * 100, 1)
 
 
-def _split_by_result(games: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-    return [g for g in games if g["win"]], [g for g in games if not g["win"]]
+def _split_by_result(games: List[Game]) -> Tuple[List[Game], List[Game]]:
+    return [g for g in games if g.win], [g for g in games if not g.win]
 
 
 def _robust_avg(values: list) -> Optional[float]:
@@ -42,16 +43,16 @@ def _robust_avg(values: list) -> Optional[float]:
     return round(statistics.mean(values), 2)
 
 
-def mine_observations(pairs: List[Tuple[Dict, Verdict]], result_filter=None) -> List[Dict]:
+def mine_observations(pairs: List[Tuple[Game, Verdict]], result_filter=None) -> List[Dict]:
     """
     Mine observations across verdicts for aggregate patterns.
     result_filter: "loss" for worst, "win" for best, None for all.
     Returns list of dicts: [{obs_type, label, count, pct, avg_score, wr, priority, statements}]
     """
     if result_filter == "loss":
-        pairs = [(g, v) for g, v in pairs if not g.get("win", False)]
+        pairs = [(g, v) for g, v in pairs if not g.win]
     elif result_filter == "win":
-        pairs = [(g, v) for g, v in pairs if g.get("win", False)]
+        pairs = [(g, v) for g, v in pairs if g.win]
 
     obs_counts = defaultdict(list)
     for g, v in pairs:
@@ -68,7 +69,7 @@ def mine_observations(pairs: List[Tuple[Dict, Verdict]], result_filter=None) -> 
         label = game_obs_list[0][1].label
         priority = game_obs_list[0][1].priority
         games = [g for g, _ in game_obs_list]
-        wins = sum(1 for g in games if g.get("win", False))
+        wins = sum(1 for g in games if g.win)
         avg_score = sum(obs.score for _, obs in game_obs_list) / len(game_obs_list)
         statements = list(dict.fromkeys(obs.statement for _, obs in game_obs_list))[:3]
 
@@ -195,7 +196,7 @@ def compare_players(my_pairs, ref_pairs, my_engines, ref_engines, my_games, ref_
     }
 
 
-def synthesize_games_with_engines(games: List[Dict], player_id: str):
+def synthesize_games_with_engines(games: List[Game], player_id: str):
     """
     Run full synthesis pipeline, returning (pairs, engines).
     Useful for compare mode which needs both verdicts and engine outputs.
@@ -253,7 +254,7 @@ def synthesize_games_with_engines(games: List[Dict], player_id: str):
     return results, engines
 
 
-def synthesize_games(games: List[Dict], player_id: str) -> List[Tuple[Dict, Verdict]]:
+def synthesize_games(games: List[Game], player_id: str) -> List[Tuple[Game, Verdict]]:
     """
     Run full synthesis pipeline on all games.
     Returns list of (game, verdict) pairs — one per game that produced a verdict.
@@ -312,7 +313,7 @@ def synthesize_games(games: List[Dict], player_id: str) -> List[Tuple[Dict, Verd
     return results
 
 
-def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
+def worst_patterns(pairs: List[Tuple[Game, Verdict]]) -> Dict:
     """
     Mine verdicts from losses for common patterns.
     Returns structured data for display:
@@ -321,7 +322,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
       - champions: [{champion, wr, games}] worst champions
       - bottom_line: str summary
     """
-    losses = [(g, v) for g, v in pairs if not g.get("win", False)]
+    losses = [(g, v) for g, v in pairs if not g.win]
     if not losses:
         return {"observation_patterns": [], "items": [], "champions": [], "bottom_line": "No losses to analyze."}
 
@@ -331,7 +332,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     # Worst first items (only from losses)
     item_games = defaultdict(list)
     for g, v in losses:
-        item = g.get("first_item")
+        item = g.first_item
         if item:
             item_games[item].append(g)
 
@@ -339,7 +340,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     all_games = [g for g, v in pairs]
     all_item_games = defaultdict(list)
     for g in all_games:
-        item = g.get("first_item")
+        item = g.first_item
         if item:
             all_item_games[item].append(g)
 
@@ -354,7 +355,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     # Worst champions
     all_champ_games = defaultdict(list)
     for g in all_games:
-        all_champ_games[g["champion"]].append(g)
+        all_champ_games[g.champion].append(g)
 
     champions = []
     for champ, cg in all_champ_games.items():
@@ -391,7 +392,7 @@ def worst_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     }
 
 
-def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
+def best_patterns(pairs: List[Tuple[Game, Verdict]]) -> Dict:
     """
     Mine verdicts from wins for common patterns.
     Returns structured data for display:
@@ -400,7 +401,7 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
       - champions: [{champion, wr, games}] best champions
       - bottom_line: str summary
     """
-    wins = [(g, v) for g, v in pairs if g.get("win", False)]
+    wins = [(g, v) for g, v in pairs if g.win]
     if not wins:
         return {"observation_patterns": [], "items": [], "champions": [], "bottom_line": "No wins to analyze."}
 
@@ -411,7 +412,7 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     all_games = [g for g, v in pairs]
     item_games = defaultdict(list)
     for g in all_games:
-        item = g.get("first_item")
+        item = g.first_item
         if item:
             item_games[item].append(g)
 
@@ -426,7 +427,7 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
     # Best champions
     champ_games = defaultdict(list)
     for g in all_games:
-        champ_games[g["champion"]].append(g)
+        champ_games[g.champion].append(g)
 
     champions = []
     for champ, cg in champ_games.items():
@@ -464,196 +465,215 @@ def best_patterns(pairs: List[Tuple[Dict, Verdict]]) -> Dict:
 # AGGREGATE DISPLAY FUNCTIONS
 # ─────────────────────────────────────────────
 
-def _print_basic_worst(games, champion, wins, losses, wr):
-    """Raw-stats fallback when synthesis is unavailable."""
+def _analyze_basic_worst(games, champion, wins, losses, wr):
+    """Raw-stats fallback when synthesis is unavailable. Returns dict."""
     first_item_games = defaultdict(list)
     for g in games:
-        if g.get("first_item"):
-            first_item_games[g["first_item"]].append(g)
+        if g.first_item:
+            first_item_games[g.first_item].append(g)
     worst_items = []
     for item, ig in first_item_games.items():
         if len(ig) >= 3:
             wr_item = _winrate(ig)
             if wr_item is not None and wr_item < 45:
-                worst_items.append((item, wr_item, len(ig)))
-    worst_items.sort(key=lambda x: x[1])
+                worst_items.append({"item": item, "wr": wr_item, "games": len(ig)})
+    worst_items.sort(key=lambda x: x["wr"])
 
     champ_games = defaultdict(list)
     for g in games:
-        champ_games[g["champion"]].append(g)
+        champ_games[g.champion].append(g)
     worst_champs = []
     for champ, cg in champ_games.items():
         if len(cg) >= 5:
             wr_c = _winrate(cg)
             if wr_c is not None and wr_c < 45:
-                worst_champs.append((champ, wr_c, len(cg)))
-    worst_champs.sort(key=lambda x: x[1])
+                worst_champs.append({"champion": champ, "wr": wr_c, "games": len(cg)})
+    worst_champs.sort(key=lambda x: x["wr"])
 
+    bottom_lines = []
     if worst_items:
-        print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
-        for item, wr_item, n in worst_items:
-            print(f"  {item}: {wr_item}% winrate across {n} games.")
-        print()
-
+        bottom_lines.append(f"Build: {worst_items[0]['item']} at {worst_items[0]['wr']}% WR.")
     if worst_champs and not champion:
-        print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
-        for champ, wr_c, n in worst_champs:
-            print(f"  {champ}: {wr_c}% winrate across {n} games.")
-        print()
-
-    print(f"\n  ── BOTTOM LINE ──────────────────────────────────────────────")
-    if worst_items:
-        print(f"  Build: {worst_items[0][0]} at {worst_items[0][1]}% WR.")
-    if worst_champs and not champion:
-        print(f"  Champion: {worst_champs[0][0]} at {worst_champs[0][1]}% WR.")
+        bottom_lines.append(f"Champion: {worst_champs[0]['champion']} at {worst_champs[0]['wr']}% WR.")
     if not worst_items and not worst_champs:
-        print(f"  No dominant weakness found at {wr}% WR. {len(losses)} losses spread across factors.")
+        bottom_lines.append(f"No dominant weakness found at {wr}% WR. {len(losses)} losses spread across factors.")
+
+    return {
+        "items": worst_items,
+        "champions": worst_champs,
+        "observation_patterns": [],
+        "bottom_line": "\n".join(bottom_lines),
+    }
 
 
-def _print_basic_best(games, champion, wins, losses, wr):
-    """Raw-stats fallback when synthesis is unavailable."""
+def _analyze_basic_best(games, champion, wins, losses, wr):
+    """Raw-stats fallback when synthesis is unavailable. Returns dict."""
     first_item_games = defaultdict(list)
     for g in games:
-        if g.get("first_item"):
-            first_item_games[g["first_item"]].append(g)
+        if g.first_item:
+            first_item_games[g.first_item].append(g)
     best_items = []
     for item, ig in first_item_games.items():
         if len(ig) >= 3:
             wr_item = _winrate(ig)
             if wr_item is not None and wr_item >= 55:
-                best_items.append((item, wr_item, len(ig)))
-    best_items.sort(key=lambda x: x[1], reverse=True)
+                best_items.append({"item": item, "wr": wr_item, "games": len(ig)})
+    best_items.sort(key=lambda x: x["wr"], reverse=True)
 
     champ_games = defaultdict(list)
     for g in games:
-        champ_games[g["champion"]].append(g)
+        champ_games[g.champion].append(g)
     best_champs = []
     for champ, cg in champ_games.items():
         if len(cg) >= 5:
             wr_c = _winrate(cg)
             if wr_c is not None and wr_c >= 55:
-                best_champs.append((champ, wr_c, len(cg)))
-    best_champs.sort(key=lambda x: x[1], reverse=True)
+                best_champs.append({"champion": champ, "wr": wr_c, "games": len(cg)})
+    best_champs.sort(key=lambda x: x["wr"], reverse=True)
 
+    bottom_lines = []
     if best_items:
-        print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
-        for item, wr_item, n in best_items:
-            print(f"  {item}: {wr_item}% winrate across {n} games.")
-        print()
-
-    if best_champs and not champion:
-        print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
-        for champ, wr_c, n in best_champs:
-            print(f"  {champ}: {wr_c}% winrate across {n} games.")
-        print()
-
-    print(f"\n  ── BOTTOM LINE ──────────────────────────────────────────────")
-    if best_items:
-        print(f"  Build: {best_items[0][0]} at {best_items[0][1]}% WR.")
+        bottom_lines.append(f"Build: {best_items[0]['item']} at {best_items[0]['wr']}% WR.")
     if best_champs:
-        print(f"  Champion: {best_champs[0][0]} at {best_champs[0][1]}% WR.")
+        bottom_lines.append(f"Champion: {best_champs[0]['champion']} at {best_champs[0]['wr']}% WR.")
     if not best_items and not best_champs:
-        print(f"  No dominant strength found at {wr}% WR.")
+        bottom_lines.append(f"No dominant strength found at {wr}% WR.")
+
+    return {
+        "items": best_items,
+        "champions": best_champs,
+        "observation_patterns": [],
+        "bottom_line": "\n".join(bottom_lines),
+    }
 
 
-def print_worst(games, champion=None, player_id=None):
-    label = f"VERDICT WORST — {champion}" if champion else "VERDICT WORST"
+def analyze_worst(games, champion=None, player_id=None):
+    """Analyze worst patterns. Returns structured dict with header stats and pattern data."""
     wins, losses = _split_by_result(games)
     wr = _winrate(games) or 0
 
-    print(f"\n  {'='*60}")
-    print(f"  {label}")
-    print(f"  {'='*60}")
-    print(f"  {len(games)} games  |  {len(wins)}W {len(losses)}L  |  {wr}% WR")
-    print(f"  {'='*60}")
-    print(f"\n  Here is what is costing you games. No softening.\n")
+    header = {
+        "label": f"VERDICT WORST — {champion}" if champion else "VERDICT WORST",
+        "total_games": len(games),
+        "wins": len(wins),
+        "losses": len(losses),
+        "wr": wr,
+    }
 
-    # Run synthesis across all games
     if player_id and len(games) >= 3:
         pairs = synthesize_games(games, player_id)
         data = worst_patterns(pairs)
-
-        if data["items"]:
-            print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
-            for item_info in data["items"]:
-                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games — {item_info['wr']}% is {100-item_info['wr']}% losses.")
-            print()
-
-        if data["champions"] and not champion:
-            print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
-            for champ_info in data["champions"]:
-                w = int(champ_info['games'] * champ_info['wr'] / 100)
-                l = champ_info['games'] - w
-                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games — {l} losses, {w} wins.")
-            print()
-
-        if data["observation_patterns"]:
-            print(f"  ── YOUR WORST PATTERNS ──────────────────────────────────────")
-            for pat in data["observation_patterns"][:6]:
-                print(f"  {pat['label'].title()}: {pat['count']} losses ({pat['pct']}%) — {pat['priority']}")
-                for stmt in pat["statements"][:2]:
-                    print(f"    → {stmt}")
-            print()
-
-        print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
-        for line in data["bottom_line"].split("\n"):
-            print(f"  {line}")
     else:
-        # Not enough data or synthesis unavailable — show basic stats
-        _print_basic_worst(games, champion, wins, losses, wr)
+        data = _analyze_basic_worst(games, champion, wins, losses, wr)
+
+    return {"header": header, **data}
+
+
+def print_worst(games, champion=None, player_id=None):
+    result = analyze_worst(games, champion=champion, player_id=player_id)
+    h = result["header"]
+
+    print(f"\n  {'='*60}")
+    print(f"  {h['label']}")
+    print(f"  {'='*60}")
+    print(f"  {h['total_games']} games  |  {h['wins']}W {h['losses']}L  |  {h['wr']}% WR")
+    print(f"  {'='*60}")
+    print(f"\n  Here is what is costing you games. No softening.\n")
+
+    if result["items"]:
+        print(f"  ── STOP BUILDING THESE ──────────────────────────────────────")
+        for item_info in result["items"]:
+            print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games — {item_info['wr']}% is {100-item_info['wr']}% losses.")
+        print()
+
+    if result["champions"] and not champion:
+        print(f"  ── STOP PLAYING THESE ───────────────────────────────────────")
+        for champ_info in result["champions"]:
+            w = int(champ_info['games'] * champ_info['wr'] / 100)
+            l = champ_info['games'] - w
+            print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games — {l} losses, {w} wins.")
+        print()
+
+    if result["observation_patterns"]:
+        print(f"  ── YOUR WORST PATTERNS ──────────────────────────────────────")
+        for pat in result["observation_patterns"][:6]:
+            print(f"  {pat['label'].title()}: {pat['count']} losses ({pat['pct']}%) — {pat['priority']}")
+            for stmt in pat["statements"][:2]:
+                print(f"    → {stmt}")
+        print()
+
+    print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+    for line in result["bottom_line"].split("\n"):
+        print(f"  {line}")
     print()
 
 
-def print_best(games, champion=None, player_id=None):
-    label = f"VERDICT BEST — {champion}" if champion else "VERDICT BEST"
+def analyze_best(games, champion=None, player_id=None):
+    """Analyze best patterns. Returns structured dict with header stats and pattern data."""
     wins, losses = _split_by_result(games)
     wr = _winrate(games) or 0
 
-    print(f"\n  {'='*60}")
-    print(f"  {label}")
-    print(f"  {'='*60}")
-    print(f"  {len(games)} games  |  {len(wins)}W {len(losses)}L  |  {wr}% WR")
-    print(f"  {'='*60}")
-    print(f"\n  Here is what is working for you. Keep doing this.\n")
+    header = {
+        "label": f"VERDICT BEST — {champion}" if champion else "VERDICT BEST",
+        "total_games": len(games),
+        "wins": len(wins),
+        "losses": len(losses),
+        "wr": wr,
+    }
 
     if player_id and len(games) >= 3:
         pairs = synthesize_games(games, player_id)
         data = best_patterns(pairs)
-
-        if data["items"]:
-            print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
-            for item_info in data["items"]:
-                print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games — {item_info['wins']} wins.")
-            print()
-
-        if data["champions"] and not champion:
-            print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
-            for champ_info in data["champions"]:
-                w = int(champ_info['games'] * champ_info['wr'] / 100)
-                l = champ_info['games'] - w
-                print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games — {w} wins, {l} losses.")
-            print()
-
-        if data["observation_patterns"]:
-            print(f"  ── WHAT YOUR WINNING GAMES HAVE IN COMMON ───────────────────")
-            for pat in data["observation_patterns"][:5]:
-                print(f"  {pat['label'].title()}: {pat['count']} wins ({pat['pct']}%) — {pat['priority']}")
-                for stmt in pat["statements"][:2]:
-                    print(f"    → {stmt}")
-            print()
-
-        print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
-        for line in data["bottom_line"].split("\n"):
-            print(f"  {line}")
     else:
-        _print_basic_best(games, champion, wins, losses, wr)
+        data = _analyze_basic_best(games, champion, wins, losses, wr)
+
+    return {"header": header, **data}
+
+
+def print_best(games, champion=None, player_id=None):
+    result = analyze_best(games, champion=champion, player_id=player_id)
+    h = result["header"]
+
+    print(f"\n  {'='*60}")
+    print(f"  {h['label']}")
+    print(f"  {'='*60}")
+    print(f"  {h['total_games']} games  |  {h['wins']}W {h['losses']}L  |  {h['wr']}% WR")
+    print(f"  {'='*60}")
+    print(f"\n  Here is what is working for you. Keep doing this.\n")
+
+    if result["items"]:
+        print(f"  ── KEEP BUILDING THESE ──────────────────────────────────────")
+        for item_info in result["items"]:
+            print(f"  {item_info['item']}: {item_info['wr']}% winrate across {item_info['games']} games.")
+        print()
+
+    if result["champions"] and not champion:
+        print(f"  ── KEEP PLAYING THESE ───────────────────────────────────────")
+        for champ_info in result["champions"]:
+            w = int(champ_info['games'] * champ_info['wr'] / 100)
+            l = champ_info['games'] - w
+            print(f"  {champ_info['champion']}: {champ_info['wr']}% winrate across {champ_info['games']} games — {w} wins, {l} losses.")
+        print()
+
+    if result["observation_patterns"]:
+        print(f"  ── WHAT YOUR WINNING GAMES HAVE IN COMMON ───────────────────")
+        for pat in result["observation_patterns"][:5]:
+            print(f"  {pat['label'].title()}: {pat['count']} wins ({pat['pct']}%) — {pat['priority']}")
+            for stmt in pat["statements"][:2]:
+                print(f"    → {stmt}")
+        print()
+
+    print(f"  ── BOTTOM LINE ──────────────────────────────────────────────")
+    for line in result["bottom_line"].split("\n"):
+        print(f"  {line}")
     print()
 
 
-def print_pool(games, min_games=3, player_id=None):
+def analyze_pool(games, min_games=3, player_id=None):
+    """Analyze champion pool health. Returns structured dict with rows and patterns."""
     champ_games = defaultdict(list)
     for g in games:
-        champ_games[g["champion"]].append(g)
+        champ_games[g.champion].append(g)
 
     rows = []
     for champ, cg in champ_games.items():
@@ -692,78 +712,120 @@ def print_pool(games, min_games=3, player_id=None):
         else:
             verdict = "INCONSISTENT"
 
-        rows.append((champ, len(cg), wr, trend, verdict))
+        rows.append({
+            "champion": champ, "games": len(cg), "wr": wr,
+            "trend": trend, "verdict": verdict,
+        })
 
-    rows.sort(key=lambda x: x[2], reverse=True)
+    rows.sort(key=lambda x: x["wr"], reverse=True)
 
-    wins_total = sum(1 for g in games if g["win"])
-    print(f"\n  {'='*60}")
-    print(f"  VERDICT POOL")
-    print(f"  {'='*60}")
-    print(f"  {len(games)} games  |  {wins_total}W {len(games)-wins_total}L  |  {round(wins_total/len(games)*100,1)}% WR")
-    print(f"  Showing champions with {min_games}+ games")
-    print(f"  {'='*60}\n")
-
-    if not rows:
-        print(f"  Not enough data. Play more games on each champion.")
-        return
-
-    print(f"  {'Champion':<20} {'Games':>6}  {'WR':>6}  {'Trend':>6}  Verdict")
-    print(f"  {'─'*58}")
-    for champ, n, wr, trend, verdict in rows:
-        print(f"  {champ:<20} {n:>6}  {wr:>5}%  {trend:>6}  {verdict}")
+    wins_total = sum(1 for g in games if g.win)
+    header = {
+        "total_games": len(games),
+        "wins": wins_total,
+        "losses": len(games) - wins_total,
+        "wr": round(wins_total / len(games) * 100, 1) if games else 0,
+        "min_games": min_games,
+    }
 
     # Per-champion observation enrichment
+    champion_patterns = []
     if player_id and len(games) >= 3:
         pairs = synthesize_games(games, player_id)
         if pairs:
             champ_verdicts = defaultdict(list)
             for g, v in pairs:
-                champ_verdicts[g["champion"]].append((g, v))
+                champ_verdicts[g.champion].append((g, v))
 
-            obs_lines = []
-            champ_lookup = {r[0]: r for r in rows}
-            for champ, n, wr, trend, verdict_label in rows:
+            for row in rows:
+                champ = row["champion"]
                 if champ not in champ_verdicts or len(champ_verdicts[champ]) < 3:
                     continue
                 cv = champ_verdicts[champ]
-                losses = [(g, v) for g, v in cv if not g.get("win", False)]
-                wins_list = [(g, v) for g, v in cv if g.get("win", False)]
+                losses = [(g, v) for g, v in cv if not g.win]
+                wins_list = [(g, v) for g, v in cv if g.win]
 
-                if wr < 50 and losses:
+                if row["wr"] < 50 and losses:
                     obs_counts = defaultdict(int)
                     for _, v in losses:
                         if v.observations:
                             obs_counts[v.observations[0].label] += 1
                     if obs_counts:
                         top_obs = max(obs_counts.items(), key=lambda x: x[1])
-                        obs_lines.append((champ, f"loss pattern: {top_obs[0]} ({top_obs[1]}/{len(losses)} losses)"))
-                elif wr >= 50 and wins_list:
+                        champion_patterns.append({
+                            "champion": champ,
+                            "type": "loss",
+                            "pattern": top_obs[0],
+                            "count": top_obs[1],
+                            "total": len(losses),
+                        })
+                elif row["wr"] >= 50 and wins_list:
                     obs_counts = defaultdict(int)
                     for _, v in wins_list:
                         if v.observations:
                             obs_counts[v.observations[0].label] += 1
                     if obs_counts:
                         top_obs = max(obs_counts.items(), key=lambda x: x[1])
-                        obs_lines.append((champ, f"win pattern: {top_obs[0]} ({top_obs[1]}/{len(wins_list)} wins)"))
+                        champion_patterns.append({
+                            "champion": champ,
+                            "type": "win",
+                            "pattern": top_obs[0],
+                            "count": top_obs[1],
+                            "total": len(wins_list),
+                        })
 
-            if obs_lines:
-                print()
-                print(f"  ── CHAMPION PATTERNS ───────────────────────────────────────")
-                for champ, line in obs_lines:
-                    print(f"  {champ}: {line}")
+    # Bottom line picks
+    play_these = [r for r in rows if r["verdict"] == "PLAY"]
+    conditional_these = [r for r in rows if r["verdict"] == "CONDITIONAL"]
+    avoid_these = [r for r in rows if r["verdict"] == "AVOID"]
+
+    return {
+        "header": header,
+        "rows": rows,
+        "champion_patterns": champion_patterns,
+        "play_pick": play_these[0] if play_these else None,
+        "conditional_pick": conditional_these[0] if conditional_these else None,
+        "avoid_pick": avoid_these[-1] if avoid_these else None,
+    }
+
+
+def print_pool(games, min_games=3, player_id=None):
+    result = analyze_pool(games, min_games=min_games, player_id=player_id)
+    h = result["header"]
+
+    print(f"\n  {'='*60}")
+    print(f"  VERDICT POOL")
+    print(f"  {'='*60}")
+    print(f"  {h['total_games']} games  |  {h['wins']}W {h['losses']}L  |  {h['wr']}% WR")
+    print(f"  Showing champions with {h['min_games']}+ games")
+    print(f"  {'='*60}\n")
+
+    if not result["rows"]:
+        print(f"  Not enough data. Play more games on each champion.")
+        return
+
+    print(f"  {'Champion':<20} {'Games':>6}  {'WR':>6}  {'Trend':>6}  Verdict")
+    print(f"  {'─'*58}")
+    for r in result["rows"]:
+        print(f"  {r['champion']:<20} {r['games']:>6}  {r['wr']:>5}%  {r['trend']:>6}  {r['verdict']}")
+
+    if result["champion_patterns"]:
+        print()
+        print(f"  ── CHAMPION PATTERNS ───────────────────────────────────────")
+        for cp in result["champion_patterns"]:
+            if cp["type"] == "loss":
+                print(f"  {cp['champion']}: loss pattern: {cp['pattern']} ({cp['count']}/{cp['total']} losses)")
+            else:
+                print(f"  {cp['champion']}: win pattern: {cp['pattern']} ({cp['count']}/{cp['total']} wins)")
 
     print(f"\n  {'─'*58}")
-    play_these = [r for r in rows if r[4] == "PLAY"]
-    conditional_these = [r for r in rows if r[4] == "CONDITIONAL"]
-    avoid_these = [r for r in rows if r[4] == "AVOID"]
-    if play_these:
-        best = play_these[0]
-        print(f"  Climb pick: {best[0]} — {best[2]}% WR across {best[1]} games.")
-    if conditional_these:
-        c = conditional_these[0]
-        print(f"  CONDITIONAL: {c[0]} — Trending up but hasn't crossed 50%. Play in low-stakes games while the trend holds.")
-    if avoid_these:
-        worst = avoid_these[-1]
-        print(f"  Bench:      {worst[0]} — {worst[2]}% WR across {worst[1]} games.")
+    if result["play_pick"]:
+        p = result["play_pick"]
+        print(f"  Climb pick: {p['champion']} — {p['wr']}% WR across {p['games']} games.")
+    if result["conditional_pick"]:
+        c = result["conditional_pick"]
+        print(f"  CONDITIONAL: {c['champion']} — Trending up but hasn't crossed 50%. Play in low-stakes games while the trend holds.")
+    if result["avoid_pick"]:
+        w = result["avoid_pick"]
+        print(f"  Bench:      {w['champion']} — {w['wr']}% WR across {w['games']} games.")
     print()

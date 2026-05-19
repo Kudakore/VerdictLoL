@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class DurabilityEngine:
@@ -26,7 +27,7 @@ class DurabilityEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -43,16 +44,16 @@ class DurabilityEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        duration = game.get("duration_min", 30)
-        win = game.get("win", False)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        duration = game.duration_min
+        win = game.win
 
-        for metric, node_type in [
+        for attr, node_type in [
             ("total_heal", "healing"),
             ("damage_mitigated", "damage_mitigation"),
             ("cc_time", "crowd_control"),
@@ -62,7 +63,7 @@ class DurabilityEngine:
             ("physical_damage_taken", "physical_damage_taken"),
             ("magic_damage_taken", "magic_damage_taken"),
         ]:
-            value = game.get(metric, 0)
+            value = getattr(game, attr)
             if value:
                 self.nodes.append(EngineNode(
                     node_id=self._make_node_id(f"{node_type}_{match_id}"),
@@ -71,12 +72,12 @@ class DurabilityEngine:
                     value=value,
                     context={
                         "match_id": match_id,
-                        metric: value,
+                        attr: value,
                         "win": win,
                     }
                 ))
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural durability patterns only.
         No evaluative thresholds — only factual cross-field profiles.
@@ -84,18 +85,18 @@ class DurabilityEngine:
         signatures = []
 
         for game in games:
-            match_id = game.get("match_id", "")
-            win = game.get("win", False)
-            duration = game.get("duration_min", 30)
+            match_id = game.match_id
+            win = game.win
+            duration = game.duration_min
 
-            heal = game.get("total_heal", 0) or 0
-            mit = game.get("damage_mitigated", 0) or 0
-            cc = game.get("cc_time", 0) or 0
-            shield = game.get("damage_shielded", 0) or 0
-            heal_team = game.get("heals_on_teammates", 0) or 0
-            dmg_taken = game.get("total_damage_taken", 0) or 0
-            phys_taken = game.get("physical_damage_taken", 0) or 0
-            magic_taken = game.get("magic_damage_taken", 0) or 0
+            heal = game.total_heal or 0
+            mit = game.damage_mitigated or 0
+            cc = game.cc_time or 0
+            shield = game.damage_shielded or 0
+            heal_team = game.heals_on_teammates or 0
+            dmg_taken = game.total_damage_taken or 0
+            phys_taken = game.physical_damage_taken or 0
+            magic_taken = game.magic_damage_taken or 0
 
             # ── Structural Pattern 1: Durability Profile ──
             # Cross-field record of all durability metrics as a factual unit.
@@ -149,9 +150,9 @@ class DurabilityEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
-        for metric, label in [
+        for attr, label in [
             ("total_heal", "total_heal"),
             ("damage_mitigated", "damage_mitigated"),
             ("cc_time", "cc_time"),
@@ -161,39 +162,39 @@ class DurabilityEngine:
             ("physical_damage_taken", "physical_damage_taken"),
             ("magic_damage_taken", "magic_damage_taken"),
         ]:
-            vals = [g.get(metric, 0) for g in games if g.get(metric)]
+            vals = [getattr(g, attr) for g in games if getattr(g, attr)]
             if vals:
                 distributions[label] = Distribution.from_values(vals)
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         return {
-            "total_heal": [g.get("total_heal", 0) or 0 for g in games],
-            "damage_mitigated": [g.get("damage_mitigated", 0) or 0 for g in games],
-            "cc_time": [g.get("cc_time", 0) or 0 for g in games],
-            "heals_on_teammates": [g.get("heals_on_teammates", 0) or 0 for g in games],
-            "damage_shielded": [g.get("damage_shielded", 0) or 0 for g in games],
-            "damage_taken": [g.get("total_damage_taken", 0) or 0 for g in games],
-            "physical_damage_taken": [g.get("physical_damage_taken", 0) or 0 for g in games],
-            "magic_damage_taken": [g.get("magic_damage_taken", 0) or 0 for g in games],
+            "total_heal": [g.total_heal or 0 for g in games],
+            "damage_mitigated": [g.damage_mitigated or 0 for g in games],
+            "cc_time": [g.cc_time or 0 for g in games],
+            "heals_on_teammates": [g.heals_on_teammates or 0 for g in games],
+            "damage_shielded": [g.damage_shielded or 0 for g in games],
+            "damage_taken": [g.total_damage_taken or 0 for g in games],
+            "physical_damage_taken": [g.physical_damage_taken or 0 for g in games],
+            "magic_damage_taken": [g.magic_damage_taken or 0 for g in games],
         }
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         factors = [min(len(games) / 20, 1.0)]
-        complete = sum(1 for g in games if g.get("total_heal") or g.get("damage_mitigated")) / len(games)
+        complete = sum(1 for g in games if g.total_heal or g.damage_mitigated) / len(games)
         factors.append(complete)
         return statistics.mean(factors)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
         return {
             "total_games_analyzed": len(games),
-            "games_with_heal_data": len([g for g in games if g.get("total_heal")]),
-            "games_with_mitigation_data": len([g for g in games if g.get("damage_mitigated")]),
-            "games_with_cc_data": len([g for g in games if g.get("cc_time")]),
-            "total_heal_recorded": sum(g.get("total_heal", 0) for g in games),
-            "total_mitigation_recorded": sum(g.get("damage_mitigated", 0) for g in games),
+            "games_with_heal_data": len([g for g in games if g.total_heal]),
+            "games_with_mitigation_data": len([g for g in games if g.damage_mitigated]),
+            "games_with_cc_data": len([g for g in games if g.cc_time]),
+            "total_heal_recorded": sum(g.total_heal for g in games),
+            "total_mitigation_recorded": sum(g.damage_mitigated for g in games),
             "total_nodes_created": len(self.nodes),
             "total_signatures_detected": len(self.signatures),
         }

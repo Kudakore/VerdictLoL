@@ -13,6 +13,7 @@ import os
 import statistics
 from collections import defaultdict
 
+from verdict_game_model import Game
 from verdict_config import ensure_config; ensure_config()
 from verdict_paths import BRAIN_PATH, SCOUT_DIR, CACHE_PATH
 from config import MY_GAME_NAME, MY_TAG_LINE
@@ -228,7 +229,7 @@ class PlayerModel:
         self.causality: Dict[str, CausalRelationship] = {}
         self.game_ids: Set[str] = set()  # Track which games are incorporated
 
-    def update_from_games(self, games: List[Dict]):
+    def update_from_games(self, games: List[Game]):
         """Update baselines and patterns from new games."""
         timestamp = datetime.now()
 
@@ -240,16 +241,16 @@ class PlayerModel:
 
         self.last_updated = timestamp
 
-    def _update_baselines(self, games: List[Dict], timestamp: datetime):
+    def _update_baselines(self, games: List[Game], timestamp: datetime):
         """Calculate personal baselines from game data."""
         metrics = {
-            "cs_at_10": [g.get("cs_10") for g in games if g.get("cs_10")],
-            "cs_at_15": [g.get("cs_15") for g in games if g.get("cs_15")],
-            "deaths_per_game": [g.get("deaths", 0) for g in games],
-            "early_deaths": [g.get("early_deaths", 0) for g in games],
-            "gold_lead_15": [g.get("gold_lead_15", 0) for g in games if g.get("gold_lead_15") is not None],
-            "vision_per_min": [g.get("vision_per_min", 0) for g in games],
-            "damage_per_min": [g.get("damage_per_min", 0) for g in games],
+            "cs_at_10": [g.cs_10 for g in games if g.cs_10 is not None],
+            "cs_at_15": [g.cs_15 for g in games if g.cs_15 is not None],
+            "deaths_per_game": [g.deaths for g in games],
+            "early_deaths": [g.early_deaths for g in games],
+            "gold_lead_15": [g.gold_lead_15 for g in games if g.gold_lead_15 is not None],
+            "vision_per_min": [g.vision_per_min for g in games],
+            "damage_per_min": [g.damage_per_min for g in games],
         }
 
         for metric_name, values in metrics.items():
@@ -258,21 +259,21 @@ class PlayerModel:
                     metric_name, values, timestamp
                 )
 
-    def _update_pattern_counts(self, games: List[Dict], timestamp: datetime):
+    def _update_pattern_counts(self, games: List[Game], timestamp: datetime):
         """Update pattern counts from game outcomes."""
         # Phase 1: Hard-coded patterns based on simple game data
         # In Phase 3, this will integrate with Temporal Engine signatures
 
         for game in games:
-            game_id = game.get("match_id", "")
+            game_id = game.match_id
             if game_id in self.game_ids:
                 continue  # Already processed
             self.game_ids.add(game_id)
 
-            win = game.get("win", False)
+            win = game.win
 
             # Pattern 1: High death count (> P90 of personal baseline)
-            deaths = game.get("deaths", 0)
+            deaths = game.deaths
             baseline = self.baselines.get("deaths_per_game")
             if baseline and deaths >= baseline.p90:
                 self._record_pattern(
@@ -285,8 +286,8 @@ class PlayerModel:
                 )
 
             # Pattern 2: CS recovery (died early but CS at 10 > P75)
-            early_deaths = game.get("early_deaths", 0)
-            cs_10 = game.get("cs_10")
+            early_deaths = game.early_deaths
+            cs_10 = game.cs_10
             cs_baseline = self.baselines.get("cs_at_10")
             if early_deaths > 0 and cs_10 and cs_baseline and cs_10 >= cs_baseline.p75:
                 self._record_pattern(
@@ -299,7 +300,7 @@ class PlayerModel:
                 )
 
             # Pattern 3: Early gold lead (won laning phase)
-            gold_lead = game.get("gold_lead_15")
+            gold_lead = game.gold_lead_15
             if gold_lead and gold_lead > 1000:
                 self._record_pattern(
                     "strong_laning_phase",
@@ -331,12 +332,12 @@ class PlayerModel:
         """Get baseline for a specific metric."""
         return self.baselines.get(metric)
 
-    def assess_game(self, game: Dict) -> Dict[str, str]:
+    def assess_game(self, game: Game) -> Dict[str, str]:
         """Assess a game against personal baselines."""
         assessments = {}
 
         for metric, baseline in self.baselines.items():
-            value = game.get(metric.replace("_per_game", "").replace("at_", "_"))
+            value = getattr(game, metric.replace("_per_game", "").replace("at_", "_"), None)
             if value is not None:
                 assessments[metric] = baseline.assess(value)
 
@@ -396,7 +397,7 @@ def _player_model_path(player_id: str) -> str:
     return os.path.join(SCOUT_DIR, f"{safe_id}_brain.json")
 
 
-def get_or_create_player_model(player_id: str, games: List[Dict] = None) -> PlayerModel:
+def get_or_create_player_model(player_id: str, games: List[Game] = None) -> PlayerModel:
     """
     Load existing player model or create new one.
     If games provided, update the model with them.

@@ -17,6 +17,9 @@ if hasattr(sys.stderr, "reconfigure"):
 # Data layer
 from verdict_data import load_cache, get_current_rank_string, get_ranked_games, fetch_player_games, get_current_game, resolve_puuid_to_riot_id, get_puuid
 
+# Game model
+from verdict_game_model import Game
+
 # Display
 from verdict_display import print_full_game, print_compact_game
 
@@ -52,7 +55,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     if not args:
-        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face enemy | face worst [champ] | face best [champ]")
+        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face enemy | face worst [champ] | face best [champ] | face item [name] | face components [name] | face champ [name] | face builds [champ] | face impact")
         sys.exit(1)
 
     mode = args[0]
@@ -208,7 +211,7 @@ if __name__ == "__main__":
         result = fetch_player_games(riot_id, count=scout_count)
         if result and result[0]:
             games, scout_player_id = result
-            ranked_games = [g for g in games if g.get("queue_id") in (420, 440)]
+            ranked_games = [g for g in games if g.queue_id in (420, 440)]
             if not ranked_games:
                 print(f"No ranked games found for {riot_id}.")
                 sys.exit(1)
@@ -234,7 +237,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         ref_games, ref_player_id = result
-        ref_ranked = [g for g in ref_games if g.get("queue_id") in (420, 440)]
+        ref_ranked = [g for g in ref_games if g.queue_id in (420, 440)]
         if not ref_ranked:
             print(f"No ranked games found for {riot_id}.")
             sys.exit(1)
@@ -341,7 +344,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         enemy_games, enemy_player_id = result
-        enemy_ranked = [g for g in enemy_games if g.get("queue_id") in (420, 440)]
+        enemy_ranked = [g for g in enemy_games if g.queue_id in (420, 440)]
 
         if len(enemy_ranked) < 3:
             print(f"  Not enough ranked games for {enemy_riot_id} (need 3+, have {len(enemy_ranked)}).\n")
@@ -350,6 +353,58 @@ if __name__ == "__main__":
         print_enemy(enemy_ranked, enemy_player_id, enemy_riot_id,
                      champion=enemy_champion, role=my_position,
                      my_games=ranked, my_player_id=player_id)
+
+    elif mode == "item":
+        from verdict_item import show_item
+        query = champion or " ".join(args[1:])
+        show_item(query)
+
+    elif mode == "components":
+        from verdict_item import show_components
+        query = champion or " ".join(args[1:])
+        show_components(query)
+
+    elif mode == "champ":
+        from verdict_champ_intel import print_champ_stats
+        if not champion:
+            print("Usage: verdict champ [champion]")
+            print("Example: verdict champ Warwick")
+            sys.exit(1)
+        print_champ_stats(champion)
+
+    elif mode == "builds":
+        from verdict_item import print_champ_builds
+        if not champion:
+            print("Usage: verdict builds [champion]")
+            print("Example: verdict builds Viego")
+            sys.exit(1)
+        print_champ_builds(historical, champion)
+
+    elif mode == "impact":
+        from verdict_win_impact import run_win_impact_engine
+        output = run_win_impact_engine(games=ranked, player_id=player_id)
+        if not output:
+            print("Not enough data for win impact analysis.")
+            sys.exit(1)
+
+        print(f"\n  Win Impact Analysis — {output.player_id[:20]}")
+        print(f"  Baseline WR: {output.baseline_win_rate:.1%} across {output.total_games} games")
+        print(f"  Confidence: {output.confidence:.0%}")
+        print()
+
+        for cls in ["loss_guarantor", "recoverable", "neutral", "lever"]:
+            group = output.get_by_classification(cls)
+            if not group:
+                continue
+            print(f"  ══ {cls.upper().replace('_', ' ')} ══")
+            for sig in group:
+                print(f"  {sig.signature_type}")
+                print(f"    {sig.games_affected} games | WR: {sig.win_rate_when_present:.1%} | Δ: {sig.delta:+.1%}")
+                if sig.compensating_factors:
+                    print(f"    Compensating factors:")
+                    for cf in sig.compensating_factors:
+                        print(f"      {cf.factor_label}: +{cf.delta_vs_problem:.0%} ({cf.games_with_both} games)")
+            print()
 
     else:
         print(f"Unknown mode: {mode}")

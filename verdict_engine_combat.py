@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class CombatEngine:
@@ -26,7 +27,7 @@ class CombatEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -43,17 +44,17 @@ class CombatEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        duration = game.get("duration_min", 30)
-        win = game.get("win", False)
-        damage = game.get("damage", 0)
-        gold = game.get("gold", 1)
-        deaths = game.get("deaths", 1)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        duration = game.duration_min
+        win = game.win
+        damage = game.damage
+        gold = game.gold
+        deaths = game.deaths
 
         # Damage efficiency node
         if damage > 0:
@@ -68,13 +69,13 @@ class CombatEngine:
                     "gold": gold,
                     "deaths": deaths,
                     "win": win,
-                    "champion": game.get("champion", ""),
-                    "kp": game.get("kp_pct", 0),
+                    "champion": game.champion,
+                    "kp": game.kp_pct,
                 }
             ))
 
         # Kill participation node
-        kp = game.get("kp_pct")
+        kp = game.kp_pct
         if kp:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"kp_{match_id}"),
@@ -89,7 +90,7 @@ class CombatEngine:
             ))
 
         # DPM node
-        dpm = game.get("damage_per_min")
+        dpm = game.damage_per_min
         if dpm:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"dpm_{match_id}"),
@@ -104,10 +105,8 @@ class CombatEngine:
             ))
 
         # Multi-kill node
-        multi = 0
-        for key in ["double_kills", "triple_kills", "quadra_kills", "penta_kills"]:
-            multi += game.get(key, 0)
-        if multi > 0 or game.get("largest_killing_spree", 0) > 0:
+        multi = game.double_kills + game.triple_kills + game.quadra_kills + game.penta_kills
+        if multi > 0 or game.largest_killing_spree > 0:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"multi_{match_id}"),
                 timestamp_min=duration / 2,
@@ -115,17 +114,17 @@ class CombatEngine:
                 value=multi,
                 context={
                     "match_id": match_id,
-                    "double_kills": game.get("double_kills", 0),
-                    "triple_kills": game.get("triple_kills", 0),
-                    "quadra_kills": game.get("quadra_kills", 0),
-                    "penta_kills": game.get("penta_kills", 0),
-                    "largest_killing_spree": game.get("largest_killing_spree", 0),
+                    "double_kills": game.double_kills,
+                    "triple_kills": game.triple_kills,
+                    "quadra_kills": game.quadra_kills,
+                    "penta_kills": game.penta_kills,
+                    "largest_killing_spree": game.largest_killing_spree,
                     "win": win,
                 }
             ))
 
         # Bounty node
-        bounty = game.get("bounty_level")
+        bounty = game.bounty_level
         if bounty:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"bounty_{match_id}"),
@@ -140,7 +139,7 @@ class CombatEngine:
             ))
 
         # Spell casts node
-        spell_casts = sum(game.get(f"spell{i}_casts", 0) for i in range(1, 5))
+        spell_casts = game.spell1_casts + game.spell2_casts + game.spell3_casts + game.spell4_casts
         if spell_casts > 0:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"spells_{match_id}"),
@@ -154,7 +153,7 @@ class CombatEngine:
                 }
             ))
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural combat patterns only.
         No evaluative thresholds — only factual cross-field profiles and event flags.
@@ -162,16 +161,16 @@ class CombatEngine:
         signatures = []
 
         for game in games:
-            match_id = game.get("match_id", "")
-            win = game.get("win", False)
-            duration = game.get("duration_min", 30)
-            damage = game.get("damage", 0)
-            kp = game.get("kp_pct", 0)
-            deaths = game.get("deaths", 0)
-            dpm = game.get("damage_per_min", 0)
-            gold = game.get("gold", 1)
-            assists = game.get("assists", 0)
-            kills = game.get("kills", 0)
+            match_id = game.match_id
+            win = game.win
+            duration = game.duration_min
+            damage = game.damage
+            kp = game.kp_pct
+            deaths = game.deaths
+            dpm = game.damage_per_min
+            gold = game.gold
+            assists = game.assists
+            kills = game.kills
 
             # ── Structural Pattern 1: Combat Profile ──
             # Cross-field structural record for every game with combat data.
@@ -198,7 +197,7 @@ class CombatEngine:
                 ))
 
             # ── Structural Pattern 2: Multi-Kill Event ──
-            multi = sum(game.get(k, 0) for k in ["double_kills", "triple_kills", "quadra_kills", "penta_kills"])
+            multi = game.double_kills + game.triple_kills + game.quadra_kills + game.penta_kills
             if multi > 0:
                 signatures.append(EngineSignature(
                     signature_id=self._make_node_id(f"combat_sig_{match_id}"),
@@ -208,11 +207,11 @@ class CombatEngine:
                     end_min=duration,
                     features={
                         "multi_kill_total": multi,
-                        "double_kills": game.get("double_kills", 0),
-                        "triple_kills": game.get("triple_kills", 0),
-                        "quadra_kills": game.get("quadra_kills", 0),
-                        "penta_kills": game.get("penta_kills", 0),
-                        "largest_spree": game.get("largest_killing_spree", 0),
+                        "double_kills": game.double_kills,
+                        "triple_kills": game.triple_kills,
+                        "quadra_kills": game.quadra_kills,
+                        "penta_kills": game.penta_kills,
+                        "largest_spree": game.largest_killing_spree,
                         "game_duration": duration,
                         "win": win,
                     },
@@ -220,7 +219,7 @@ class CombatEngine:
                 ))
 
             # ── Structural Pattern 3: Killing Spree Event ──
-            spree = game.get("largest_killing_spree", 0)
+            spree = game.largest_killing_spree
             if spree >= 3:
                 signatures.append(EngineSignature(
                     signature_id=self._make_node_id(f"combat_sig_{match_id}"),
@@ -238,7 +237,7 @@ class CombatEngine:
                 ))
 
             # ── Structural Pattern 4: Bounty Event ──
-            bounty = game.get("bounty_level", 0)
+            bounty = game.bounty_level
             if bounty > 0:
                 signatures.append(EngineSignature(
                     signature_id=self._make_node_id(f"combat_sig_{match_id}"),
@@ -256,7 +255,7 @@ class CombatEngine:
                 ))
 
             # ── Structural Pattern 5: Spell Cast Intensity ──
-            spell_casts = sum(game.get(f"spell{i}_casts", 0) for i in range(1, 5))
+            spell_casts = game.spell1_casts + game.spell2_casts + game.spell3_casts + game.spell4_casts
             if spell_casts > 0:
                 signatures.append(EngineSignature(
                     signature_id=self._make_node_id(f"combat_sig_{match_id}"),
@@ -267,10 +266,10 @@ class CombatEngine:
                     features={
                         "total_spell_casts": spell_casts,
                         "casts_per_min": round(spell_casts / max(duration, 1), 1),
-                        "spell1_casts": game.get("spell1_casts", 0),
-                        "spell2_casts": game.get("spell2_casts", 0),
-                        "spell3_casts": game.get("spell3_casts", 0),
-                        "spell4_casts": game.get("spell4_casts", 0),
+                        "spell1_casts": game.spell1_casts,
+                        "spell2_casts": game.spell2_casts,
+                        "spell3_casts": game.spell3_casts,
+                        "spell4_casts": game.spell4_casts,
                         "game_duration": duration,
                         "win": win,
                     },
@@ -279,57 +278,57 @@ class CombatEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
-        damages = [g.get("damage", 0) for g in games if g.get("damage")]
+        damages = [g.damage for g in games if g.damage]
         if damages:
             distributions["total_damage"] = Distribution.from_values(damages)
-        dpms = [g.get("damage_per_min", 0) for g in games if g.get("damage_per_min")]
+        dpms = [g.damage_per_min for g in games if g.damage_per_min]
         if dpms:
             distributions["damage_per_min"] = Distribution.from_values(dpms)
-        kps = [g.get("kp_pct", 0) for g in games if g.get("kp_pct")]
+        kps = [g.kp_pct for g in games if g.kp_pct]
         if kps:
             distributions["kill_participation"] = Distribution.from_values(kps)
-        dpg = [g.get("damage", 0) / max(g.get("gold", 1), 1) for g in games]
+        dpg = [g.damage / max(g.gold, 1) for g in games]
         distributions["damage_per_gold"] = Distribution.from_values(dpg)
-        dpd = [g.get("damage", 0) / max(g.get("deaths", 1), 1) for g in games if g.get("deaths", 0) > 0]
+        dpd = [g.damage / max(g.deaths, 1) for g in games if g.deaths > 0]
         if dpd:
             distributions["damage_per_death"] = Distribution.from_values(dpd)
-        sprees = [g.get("largest_killing_spree", 0) for g in games]
+        sprees = [g.largest_killing_spree for g in games]
         if any(sprees):
             distributions["killing_spree"] = Distribution.from_values(sprees)
-        multi = [sum(g.get(k, 0) for k in ["double_kills", "triple_kills", "quadra_kills", "penta_kills"]) for g in games]
+        multi = [g.double_kills + g.triple_kills + g.quadra_kills + g.penta_kills for g in games]
         if any(multi):
             distributions["multi_kills"] = Distribution.from_values(multi)
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         return {
-            "damage": [g.get("damage", 0) for g in games],
-            "damage_per_min": [g.get("damage_per_min", 0) for g in games],
-            "kp_pct": [g.get("kp_pct", 0) for g in games],
-            "deaths": [g.get("deaths", 0) for g in games],
-            "damage_per_gold": [g.get("damage", 0) / max(g.get("gold", 1), 1) for g in games],
-            "multi_kills": [sum(g.get(k, 0) for k in ["double_kills", "triple_kills", "quadra_kills", "penta_kills"]) for g in games],
-            "largest_spree": [g.get("largest_killing_spree", 0) for g in games],
-            "bounty_level": [g.get("bounty_level", 0) or 0 for g in games],
-            "spell_casts": [sum(g.get(f"spell{i}_casts", 0) for i in range(1, 5)) for g in games],
+            "damage": [g.damage for g in games],
+            "damage_per_min": [g.damage_per_min for g in games],
+            "kp_pct": [g.kp_pct for g in games],
+            "deaths": [g.deaths for g in games],
+            "damage_per_gold": [g.damage / max(g.gold, 1) for g in games],
+            "multi_kills": [g.double_kills + g.triple_kills + g.quadra_kills + g.penta_kills for g in games],
+            "largest_spree": [g.largest_killing_spree for g in games],
+            "bounty_level": [g.bounty_level or 0 for g in games],
+            "spell_casts": [g.spell1_casts + g.spell2_casts + g.spell3_casts + g.spell4_casts for g in games],
         }
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         factors = [min(len(games) / 20, 1.0)]
-        complete = sum(1 for g in games if g.get("damage") and g.get("kp_pct")) / len(games)
+        complete = sum(1 for g in games if g.damage and g.kp_pct) / len(games)
         factors.append(complete)
         return statistics.mean(factors)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
         return {
             "total_games_analyzed": len(games),
-            "games_with_damage_data": len([g for g in games if g.get("damage")]),
-            "games_with_kp_data": len([g for g in games if g.get("kp_pct")]),
-            "total_damage_recorded": sum(g.get("damage", 0) for g in games),
+            "games_with_damage_data": len([g for g in games if g.damage]),
+            "games_with_kp_data": len([g for g in games if g.kp_pct]),
+            "total_damage_recorded": sum(g.damage for g in games),
             "total_nodes_created": len(self.nodes),
             "total_signatures_detected": len(self.signatures),
         }

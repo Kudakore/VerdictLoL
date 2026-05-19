@@ -1,5 +1,5 @@
 """
-Win Impact Engine - FaceCheck Engine Architecture
+Win Impact Engine - Verdict Engine Architecture
 
 Domain: quantitative impact analysis.
 Measures how much each problem signal hurts or helps win rate.
@@ -60,11 +60,11 @@ class WinImpactSignature:
 class WinImpactEngine:
     def __init__(self, player_id: str):
         self.player_id = player_id
-        self.games: List[Dict] = []
+        self.games = []
         self.signatures: List[WinImpactSignature] = []
         self.baseline_win_rate: float = 0.0
 
-    def analyze(self, games: List[Dict]) -> "WinImpactOutput":
+    def analyze(self, games) -> "WinImpactOutput":
         """
         Analyze all games for problem signal impact.
         For each signature type found in the games, compute:
@@ -75,7 +75,7 @@ class WinImpactEngine:
         self.games = games
         self.signatures = []
 
-        wins = sum(1 for g in games if g.get("win", False))
+        wins = sum(1 for g in games if g.win)
         self.baseline_win_rate = wins / len(games) if games else 0.5
 
         # Group games by which problem signals they contain
@@ -98,7 +98,7 @@ class WinImpactEngine:
             confidence=self._compute_confidence()
         )
 
-    def _group_games_by_signals(self, games: List[Dict]) -> Dict[str, List[int]]:
+    def _group_games_by_signals(self, games) -> Dict[str, List[int]]:
         """
         Go through all games and tag which problem signals each one has.
         Returns: {signal_type: [game_index, ...]}
@@ -115,21 +115,19 @@ class WinImpactEngine:
 
         return signal_map
 
-    def _extract_game_signatures(self, game: Dict) -> List[str]:
+    def _extract_game_signatures(self, game) -> List[str]:
         """
         Extract problem signal types present in a single game.
         Uses structural data available in the game record.
         """
         signals = []
-        match_id = game.get("match_id", "")
 
         # ── Death-based signals ───────────────────────────
-        deaths = game.get("deaths", 0)
-        death_minutes = game.get("death_minutes", [])
+        deaths = game.deaths
+        death_minutes = game.death_minutes
 
         # Early deaths (before 10 min)
-        early_deaths = game.get("early_deaths", 0)
-        if early_deaths >= 2:
+        if game.early_deaths >= 2:
             signals.append("early_deaths")
 
         # Death cluster: 2+ deaths within 4 minutes
@@ -154,47 +152,44 @@ class WinImpactEngine:
                     break
 
         # ── CS-based signals ───────────────────────────────
-        cs_at_10 = game.get("cs_at_10") or 0
-        cs_at_15 = game.get("cs_at_15") or 0
+        cs_10 = game.cs_10 or 0
+        cs_15 = game.cs_15 or 0
 
-        if cs_at_10 < 35:
+        if cs_10 < 35:
             signals.append("cs_deficit_early")
-        if cs_at_15 < 80:
+        if cs_15 < 80:
             signals.append("cs_deficit_mid")
 
         # ── Economy signals ────────────────────────────────
-        gold_lead_15 = game.get("gold_lead_15") or 0
+        gold_lead_15 = game.gold_lead_15 or 0
         if gold_lead_15 < -500:
             signals.append("gold_deficit")
         elif gold_lead_15 > 500:
             signals.append("gold_lead")
 
         # ── Combat signals ───────────────────────────────
-        damage = game.get("damage") or 0
-        kp_pct = game.get("kp_pct") or 0
-        dpm = game.get("dpm") or 0
+        damage = game.damage
+        kp_pct = game.kp_pct
 
-        if damage > 0 and kp_pct < 0.40:
+        if damage > 0 and kp_pct < 40:
             signals.append("low_kill_participation")
 
         # ── Vision signals ────────────────────────────────
-        vision = game.get("vision") or 0
+        vision = game.vision
         if vision > 0 and vision < 30:
             signals.append("low_vision")
 
         # ── Objective signals ─────────────────────────────
-        dragon_kills = game.get("dragon_kills", 0)
-        herald_kills = game.get("herald_kills", 0)
-        turret_kills = game.get("turret_kills", 0)
+        turret_kills = game.turret_kills
 
-        if dragon_kills == 0 and game.get("game_duration", 0) > 15:
+        if game.my_team.dragon_kills == 0 and game.duration_min > 15:
             signals.append("no_dragon")
 
-        if turret_kills == 0 and game.get("game_duration", 0) > 20:
+        if turret_kills == 0 and game.duration_min > 20:
             signals.append("no_turrets")
 
         # ── Draft signals ────────────────────────────────
-        side = game.get("side", "")
+        side = game.side
         if side == "blue":
             signals.append("blue_side")
         elif side == "red":
@@ -208,13 +203,13 @@ class WinImpactEngine:
             return None  # need minimum sample size
 
         # Win rate when signal is present
-        wins_with_signal = sum(1 for i in game_indices if self.games[i].get("win", False))
+        wins_with_signal = sum(1 for i in game_indices if self.games[i].win)
         win_rate_present = wins_with_signal / len(game_indices)
 
         delta = win_rate_present - self.baseline_win_rate
 
         # Find compensating factors in the winning subset
-        winning_indices = [i for i in game_indices if self.games[i].get("win", False)]
+        winning_indices = [i for i in game_indices if self.games[i].win]
         compensating_factors = self._find_compensating_factors(sig_type, winning_indices)
 
         # Classify
@@ -245,15 +240,15 @@ class WinImpactEngine:
 
         # Test various compensating factors
         candidate_factors = [
-            ("dragon_control", lambda g: (g.get("dragon_kills") or 0) > 0),
-            ("herald_control", lambda g: (g.get("herald_kills") or 0) > 0),
-            ("turret_push", lambda g: (g.get("turret_kills") or 0) > 0),
-            ("vision_presence", lambda g: (g.get("vision") or 0) >= 40),
-            ("cs_recovery", lambda g: (g.get("cs_at_15") or 0) >= 80),
-            ("gold_comeback", lambda g: (g.get("gold_lead_15") or 0) > 0),
-            ("low_deaths", lambda g: (g.get("deaths") or 0) <= 4),
-            ("high_damage", lambda g: (g.get("damage") or 0) >= 15000),
-            ("kill_participation", lambda g: (g.get("kp_pct") or 0) >= 0.60),
+            ("dragon_control", lambda g: g.my_team.dragon_kills > 0),
+            ("herald_control", lambda g: g.my_team.rift_herald_kills > 0),
+            ("turret_push", lambda g: g.turret_kills > 0),
+            ("vision_presence", lambda g: g.vision >= 40),
+            ("cs_recovery", lambda g: (g.cs_15 or 0) >= 80),
+            ("gold_comeback", lambda g: (g.gold_lead_15 or 0) > 0),
+            ("low_deaths", lambda g: g.deaths <= 4),
+            ("high_damage", lambda g: g.damage >= 15000),
+            ("kill_participation", lambda g: g.kp_pct >= 60),
         ]
 
         for factor_key, factor_fn in candidate_factors:
@@ -261,8 +256,8 @@ class WinImpactEngine:
             games_with_factor = [i for i in problem_games if factor_fn(self.games[i])]
 
             if len(games_with_factor) >= 2:
-                wr_with_factor = sum(1 for i in games_with_factor if self.games[i].get("win", False)) / len(games_with_factor)
-                delta_vs_problem = wr_with_factor - (sum(1 for i in problem_games if self.games[i].get("win", False)) / len(problem_games))
+                wr_with_factor = sum(1 for i in games_with_factor if self.games[i].win) / len(games_with_factor)
+                delta_vs_problem = wr_with_factor - (sum(1 for i in problem_games if self.games[i].win) / len(problem_games))
                 delta_vs_baseline = wr_with_factor - self.baseline_win_rate
 
                 if delta_vs_problem > 0.05:  # at least +5% improvement
@@ -319,8 +314,19 @@ class WinImpactOutput:
         return [s for s in self.signatures if s.classification == "lever"]
 
 
-def run_win_impact_engine(cache_path: str = "C:\\Facecheck\\verdict_cache.json") -> Optional[WinImpactOutput]:
-    """Convenience function for running the engine against the cache."""
+def run_win_impact_engine(games=None, player_id=None, cache_path=None) -> Optional[WinImpactOutput]:
+    """Run the Win Impact engine.
+
+    Primary interface: pass games and player_id directly.
+    Fallback: load from cache if games/player_id not provided.
+    """
+    if games is not None and player_id is not None:
+        engine = WinImpactEngine(player_id)
+        return engine.analyze(games)
+
+    if cache_path is None:
+        from verdict_paths import CACHE_PATH
+        cache_path = CACHE_PATH
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)

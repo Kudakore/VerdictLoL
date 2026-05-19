@@ -14,6 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class DeathEngine:
@@ -27,7 +28,7 @@ class DeathEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -48,16 +49,16 @@ class DeathEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        duration = game.get("duration_min", 30)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        duration = game.duration_min
 
         # Death nodes
-        death_minutes = game.get("death_minutes", [])
+        death_minutes = game.death_minutes
         for i, death_min in enumerate(death_minutes):
             node = EngineNode(
                 node_id=self._make_node_id(f"death_{match_id}"),
@@ -69,15 +70,15 @@ class DeathEngine:
                     "death_number": i + 1,
                     "total_deaths": len(death_minutes),
                     "game_duration": duration,
-                    "win": game.get("win", False),
-                    "champion": game.get("champion", ""),
+                    "win": game.win,
+                    "champion": game.champion,
                     "early": death_min <= 10,
                 }
             )
             self.nodes.append(node)
 
         # Survival checkpoint (longest living)
-        longest_living = game.get("longest_living", 0)
+        longest_living = game.longest_living
         if longest_living:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"survival_{match_id}"),
@@ -89,12 +90,12 @@ class DeathEngine:
                     "longest_living_sec": longest_living,
                     "longest_living_min": longest_living / 60,
                     "game_duration": duration,
-                    "win": game.get("win", False),
+                    "win": game.win,
                 }
             ))
 
         # Time spent dead
-        time_spent_dead = game.get("time_spent_dead", 0)
+        time_spent_dead = game.time_spent_dead
         if time_spent_dead:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"tsd_{match_id}"),
@@ -106,7 +107,7 @@ class DeathEngine:
                     "time_spent_dead_sec": time_spent_dead,
                     "time_spent_dead_min": time_spent_dead / 60,
                     "game_duration": duration,
-                    "win": game.get("win", False),
+                    "win": game.win,
                 }
             ))
 
@@ -126,7 +127,7 @@ class DeathEngine:
                     neighbors["next_node"] = sorted_nodes[i + 1].node_id
                 node.context.update(neighbors)
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural death patterns only.
         No evaluative thresholds — only temporal and structural facts.
@@ -137,11 +138,13 @@ class DeathEngine:
             by_game[node.context.get("match_id", "")].append(node)
 
         for match_id, nodes in by_game.items():
-            game = next((g for g in games if g.get("match_id") == match_id), {})
+            game = next((g for g in games if g.match_id == match_id), None)
+            if not game:
+                continue
             sorted_nodes = sorted(nodes, key=lambda n: n.timestamp_min)
             death_nodes = [n for n in sorted_nodes if n.node_type == "death"]
-            duration = game.get("duration_min", 30)
-            win = game.get("win", False)
+            duration = game.duration_min
+            win = game.win
 
             if not death_nodes:
                 continue
@@ -301,60 +304,60 @@ class DeathEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
 
         all_death_minutes = []
         for game in games:
-            all_death_minutes.extend(game.get("death_minutes", []))
+            all_death_minutes.extend(game.death_minutes)
         if all_death_minutes:
             distributions["death_timing"] = Distribution.from_values(all_death_minutes)
 
-        deaths_per_game = [g.get("deaths", 0) for g in games]
+        deaths_per_game = [g.deaths for g in games]
         distributions["deaths_per_game"] = Distribution.from_values(deaths_per_game)
 
-        early_deaths = [g.get("early_deaths", 0) for g in games]
+        early_deaths = [g.early_deaths for g in games]
         distributions["early_deaths"] = Distribution.from_values(early_deaths)
 
-        longest_living_vals = [g.get("longest_living", 0) for g in games if g.get("longest_living")]
+        longest_living_vals = [g.longest_living for g in games if g.longest_living]
         if any(longest_living_vals):
             distributions["longest_living"] = Distribution.from_values(longest_living_vals)
 
-        time_spent_dead_vals = [g.get("time_spent_dead", 0) for g in games if g.get("time_spent_dead")]
+        time_spent_dead_vals = [g.time_spent_dead for g in games if g.time_spent_dead]
         if any(time_spent_dead_vals):
             distributions["time_spent_dead"] = Distribution.from_values(time_spent_dead_vals)
 
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         space = {}
-        space["death_count"] = [g.get("deaths", 0) for g in games]
+        space["death_count"] = [g.deaths for g in games]
         space["death_minute_avg"] = [
-            statistics.mean(g.get("death_minutes", [0])) if g.get("death_minutes") else 0
+            statistics.mean(g.death_minutes) if g.death_minutes else 0
             for g in games
         ]
-        space["early_deaths"] = [g.get("early_deaths", 0) for g in games]
-        space["longest_living"] = [g.get("longest_living", 0) or 0 for g in games]
-        space["time_spent_dead"] = [g.get("time_spent_dead", 0) or 0 for g in games]
+        space["early_deaths"] = [g.early_deaths for g in games]
+        space["longest_living"] = [g.longest_living or 0 for g in games]
+        space["time_spent_dead"] = [g.time_spent_dead or 0 for g in games]
         return space
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         factors = []
         n = len(games)
         factors.append(min(n / 20, 1.0))
-        completeness = sum(1 for g in games if g.get("death_minutes")) / n
+        completeness = sum(1 for g in games if g.death_minutes) / n
         factors.append(completeness)
         return statistics.mean(factors)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
         return {
             "total_games_analyzed": len(games),
-            "games_with_death_data": len([g for g in games if g.get("death_minutes")]),
-            "games_with_longest_living": len([g for g in games if g.get("longest_living")]),
-            "games_with_time_spent_dead": len([g for g in games if g.get("time_spent_dead")]),
-            "total_deaths_recorded": sum(len(g.get("death_minutes", [])) for g in games),
+            "games_with_death_data": len([g for g in games if g.death_minutes]),
+            "games_with_longest_living": len([g for g in games if g.longest_living]),
+            "games_with_time_spent_dead": len([g for g in games if g.time_spent_dead]),
+            "total_deaths_recorded": sum(len(g.death_minutes) for g in games),
             "total_nodes_created": len(self.nodes),
             "total_signatures_detected": len(self.signatures),
         }

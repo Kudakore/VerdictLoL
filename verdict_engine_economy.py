@@ -14,6 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class EconomyEngine:
@@ -27,7 +28,7 @@ class EconomyEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -44,18 +45,18 @@ class EconomyEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        duration = game.get("duration_min", 30)
-        win = game.get("win", False)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        duration = game.duration_min
+        win = game.win
 
         # CS checkpoint nodes (every 5 min from jungle_pathing)
-        jp = game.get("jungle_pathing", {})
-        cs_by_min = jp.get("cs_by_minute", {}) if jp else {}
+        jp = game.jungle_pathing
+        cs_by_min = jp.cs_by_minute if jp else {}
         for minute in range(5, int(duration) + 1, 5):
             cs = cs_by_min.get(str(minute)) or cs_by_min.get(minute, 0)
             if cs > 0:
@@ -74,7 +75,7 @@ class EconomyEngine:
                 ))
 
         # Gold checkpoint at 15
-        gold_15 = game.get("gold_15")
+        gold_15 = game.gold_15
         if gold_15:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"gold15_{match_id}"),
@@ -84,27 +85,27 @@ class EconomyEngine:
                 context={
                     "match_id": match_id,
                     "gold_15": gold_15,
-                    "gold_lead_15": game.get("gold_lead_15"),
+                    "gold_lead_15": game.gold_lead_15,
                     "win": win,
                 }
             ))
 
         # First clear node
-        if jp and jp.get("first_clear_min"):
+        if jp and jp.first_clear_min:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"fc_{match_id}"),
-                timestamp_min=jp["first_clear_min"],
+                timestamp_min=jp.first_clear_min,
                 node_type="first_clear",
-                value=jp["first_clear_min"],
+                value=jp.first_clear_min,
                 context={
                     "match_id": match_id,
-                    "first_clear_min": jp["first_clear_min"],
+                    "first_clear_min": jp.first_clear_min,
                     "win": win,
                 }
             ))
 
         # Build order node (first item as proxy for item timing)
-        first_item = game.get("first_item")
+        first_item = game.first_item
         if first_item:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"item_{match_id}"),
@@ -114,28 +115,27 @@ class EconomyEngine:
                 context={
                     "match_id": match_id,
                     "first_item": first_item,
-                    "build_order": game.get("build_order", []),
+                    "build_order": game.build_order,
                     "win": win,
                 }
             ))
 
         # CS@10 and CS@15 nodes (static checkpoints)
-        for checkpoint, key in [(10, "cs_10"), (15, "cs_15")]:
-            cs_val = game.get(key)
-            if cs_val:
+        for checkpoint, val in [(10, game.cs_10), (15, game.cs_15)]:
+            if val:
                 self.nodes.append(EngineNode(
                     node_id=self._make_node_id(f"cs{checkpoint}_{match_id}"),
                     timestamp_min=checkpoint,
                     node_type=f"cs_at_{checkpoint}",
-                    value=cs_val,
+                    value=val,
                     context={
                         "match_id": match_id,
-                        "cs": cs_val,
+                        "cs": val,
                         "win": win,
                     }
                 ))
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural economy patterns only.
         No evaluative thresholds — only temporal and structural facts.
@@ -143,16 +143,16 @@ class EconomyEngine:
         signatures = []
 
         for game in games:
-            match_id = game.get("match_id", "")
-            win = game.get("win", False)
-            duration = game.get("duration_min", 30)
-            cs_10 = game.get("cs_10")
-            cs_15 = game.get("cs_15")
-            gold_lead = game.get("gold_lead_15")
-            jp = game.get("jungle_pathing", {}) or {}
-            first_clear = jp.get("first_clear_min")
-            first_item = game.get("first_item")
-            build_order = game.get("build_order", [])
+            match_id = game.match_id
+            win = game.win
+            duration = game.duration_min
+            cs_10 = game.cs_10
+            cs_15 = game.cs_15
+            gold_lead = game.gold_lead_15
+            jp = game.jungle_pathing
+            first_clear = jp.first_clear_min if jp else None
+            first_item = game.first_item
+            build_order = game.build_order
 
             # ── Structural Pattern 1: CS Checkpoint Sequence ──
             if cs_10 is not None and cs_15 is not None:
@@ -203,7 +203,7 @@ class EconomyEngine:
                     end_min=15,
                     features={
                         "gold_lead_15": gold_lead,
-                        "gold_15": game.get("gold_15"),
+                        "gold_15": game.gold_15,
                         "game_duration": duration,
                         "win": win,
                     },
@@ -246,78 +246,78 @@ class EconomyEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
 
-        cs_10_values = [g.get("cs_10", 0) for g in games if g.get("cs_10")]
+        cs_10_values = [g.cs_10 for g in games if g.cs_10]
         if cs_10_values:
             distributions["cs_at_10"] = Distribution.from_values(cs_10_values)
 
-        cs_15_values = [g.get("cs_15", 0) for g in games if g.get("cs_15")]
+        cs_15_values = [g.cs_15 for g in games if g.cs_15]
         if cs_15_values:
             distributions["cs_at_15"] = Distribution.from_values(cs_15_values)
 
-        cs_per_min = [g.get("cs_per_min", 0) for g in games if g.get("cs_per_min")]
+        cs_per_min = [g.cs_per_min for g in games if g.cs_per_min]
         if cs_per_min:
             distributions["cs_per_min"] = Distribution.from_values(cs_per_min)
 
-        gold_lead_15 = [g.get("gold_lead_15", 0) or 0 for g in games]
+        gold_lead_15 = [g.gold_lead_15 or 0 for g in games]
         if any(gold_lead_15):
             distributions["gold_lead_15"] = Distribution.from_values(gold_lead_15)
 
-        gold_15 = [g.get("gold_15", 0) or 0 for g in games if g.get("gold_15")]
+        gold_15 = [g.gold_15 or 0 for g in games if g.gold_15]
         if any(gold_15):
             distributions["gold_15"] = Distribution.from_values(gold_15)
 
-        gpm = [g.get("gold_per_min", 0) or 0 for g in games if g.get("gold_per_min")]
+        gpm = [g.gold_per_min for g in games if g.gold_per_min]
         if any(gpm):
             distributions["gold_per_min"] = Distribution.from_values(gpm)
 
         first_clears = []
         for game in games:
-            jp = game.get("jungle_pathing", {})
-            if jp and jp.get("first_clear_min"):
-                first_clears.append(jp["first_clear_min"])
+            jp = game.jungle_pathing
+            if jp and jp.first_clear_min:
+                first_clears.append(jp.first_clear_min)
         if first_clears:
             distributions["first_clear_timing"] = Distribution.from_values(first_clears)
 
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         space = {}
-        space["cs_at_10"] = [g.get("cs_10", 0) or 0 for g in games]
-        space["cs_at_15"] = [g.get("cs_15", 0) or 0 for g in games]
-        space["cs_per_min"] = [g.get("cs_per_min", 0) or 0 for g in games]
-        space["gold_lead_15"] = [g.get("gold_lead_15", 0) or 0 for g in games]
-        space["gold_15"] = [g.get("gold_15", 0) or 0 for g in games]
-        space["gold_per_min"] = [g.get("gold_per_min", 0) or 0 for g in games]
+        space["cs_at_10"] = [g.cs_10 or 0 for g in games]
+        space["cs_at_15"] = [g.cs_15 or 0 for g in games]
+        space["cs_per_min"] = [g.cs_per_min or 0 for g in games]
+        space["gold_lead_15"] = [g.gold_lead_15 or 0 for g in games]
+        space["gold_15"] = [g.gold_15 or 0 for g in games]
+        space["gold_per_min"] = [g.gold_per_min or 0 for g in games]
         space["first_clear_min"] = [
-            (g.get("jungle_pathing", {}) or {}).get("first_clear_min", 0) or 0
-            for g in games
+            game.jungle_pathing.first_clear_min or 0 if game.jungle_pathing else 0
+            for game in games
         ]
         return space
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         factors = [min(len(games) / 20, 1.0)]
         scores = []
         for g in games:
             score = 0
-            if g.get("cs_10"): score += 0.3
-            if g.get("cs_15"): score += 0.2
-            if g.get("gold_15"): score += 0.3
-            if g.get("jungle_pathing"): score += 0.2
+            if g.cs_10: score += 0.3
+            if g.cs_15: score += 0.2
+            if g.gold_15: score += 0.3
+            if g.jungle_pathing: score += 0.2
             scores.append(score)
         factors.append(statistics.mean(scores) if scores else 0)
         return statistics.mean(factors)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
         return {
             "total_games_analyzed": len(games),
-            "games_with_cs_data": len([g for g in games if g.get("cs_10") or g.get("cs_15")]),
-            "games_with_gold_data": len([g for g in games if g.get("gold_15")]),
-            "games_with_jungle_pathing": len([g for g in games if g.get("jungle_pathing")]),
+            "games_with_cs_data": len([g for g in games if g.cs_10 or g.cs_15]),
+            "games_with_gold_data": len([g for g in games if g.gold_15]),
+            "games_with_jungle_pathing": len([g for g in games if g.jungle_pathing]),
             "total_nodes_created": len(self.nodes),
             "total_signatures_detected": len(self.signatures),
         }

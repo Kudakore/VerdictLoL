@@ -5,6 +5,7 @@ import sys
 import time
 from datetime import datetime
 
+from verdict_game_model import Game, PlayerStats, TeamObjectives, JunglePathing
 from verdict_config import ensure_config
 ensure_config()
 
@@ -544,9 +545,12 @@ def build_match_record(match_id, match, timeline, puuid, item_names, components)
             "deaths": enemy_team_deaths,
             **enemy_team_obj,
         },
+
+        # Kill participation (computed)
+        "kp_pct": round((my_stats["kills"] + my_stats["assists"]) / max(my_team_kills, 1) * 100, 1),
     }
 
-    return record
+    return Game.from_dict(record)
 
 # ─────────────────────────────────────────────
 # CACHE MANAGEMENT
@@ -555,12 +559,20 @@ def build_match_record(match_id, match, timeline, puuid, item_names, components)
 def load_cache():
     if os.path.exists(CACHE_PATH):
         with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            cache = json.load(f)
+        # Convert game dicts to Game objects
+        if "games" in cache:
+            cache["games"] = [Game.from_dict(g) if isinstance(g, dict) else g for g in cache["games"]]
+        return cache
     return {"puuid": None, "games": [], "cached_ids": [], "rank_history": [], "last_updated": None}
 
 def save_cache(cache):
+    # Convert Game objects to dicts for JSON serialization
+    serializable = dict(cache)
+    if "games" in serializable:
+        serializable["games"] = [g.to_dict() if isinstance(g, Game) else g for g in serializable["games"]]
     with open(CACHE_PATH, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2)
+        json.dump(serializable, f, indent=2)
 
 # ─────────────────────────────────────────────
 # RANK HELPERS
@@ -586,9 +598,9 @@ def get_current_rank_string(cache_or_entries):
 
 def get_ranked_games(cache, champion=None, count=None):
     """Return ranked games only, optionally filtered by champion and count."""
-    games = [g for g in cache.get("games", []) if g.get("queue_id") in (420, 440)]
+    games = [g for g in cache.get("games", []) if g.queue_id in (420, 440)]
     if champion:
-        games = [g for g in games if g["champion"].lower() == champion.lower()]
+        games = [g for g in games if g.champion.lower() == champion.lower()]
     if count:
         games = games[:count]
     return games
@@ -628,6 +640,8 @@ def fetch_player_games(riot_id, count=20):
     if os.path.exists(scout_path):
         with open(scout_path, "r", encoding="utf-8") as f:
             cache = json.load(f)
+        if "games" in cache:
+            cache["games"] = [Game.from_dict(g) if isinstance(g, dict) else g for g in cache["games"]]
     else:
         cache = {"puuid": puuid, "player_id": player_id, "games": [], "cached_ids": [], "last_updated": None}
 
@@ -680,8 +694,12 @@ def fetch_player_games(riot_id, count=20):
     cache["cached_ids"] = list(cached_ids)
     cache["last_updated"] = datetime.now().isoformat()
 
+    # Serialize Game objects to dicts for JSON
+    serializable = dict(cache)
+    serializable["games"] = [g.to_dict() if isinstance(g, Game) else g for g in serializable["games"]]
+
     with open(scout_path, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2)
+        json.dump(serializable, f, indent=2)
 
     print(f"\nCache updated. {len(cache['games'])} total games for {player_id}.")
     return cache["games"][:count], player_id
@@ -731,7 +749,7 @@ def fetch_and_cache(count=50, force=False):
     # so we can replace old records with freshly-fetched ones
     existing_by_id = {}
     if force:
-        existing_by_id = {g["match_id"]: i for i, g in enumerate(cache.get("games", []))}
+        existing_by_id = {g.match_id: i for i, g in enumerate(cache.get("games", []))}
 
     print(f"Fetching {len(new_ids)} new games (rate limited ~1.5s/call)...")
     estimated = len(new_ids) * 2 * 1.5
@@ -754,8 +772,8 @@ def fetch_and_cache(count=50, force=False):
     if force:
         # Remove old copies of re-fetched games, then prepend new ones
         old_games = cache.get("games", [])
-        replaced_ids = {r["match_id"] for r in new_records}
-        remaining = [g for g in old_games if g["match_id"] not in replaced_ids]
+        replaced_ids = {r.match_id for r in new_records}
+        remaining = [g for g in old_games if g.match_id not in replaced_ids]
         cache["games"] = new_records + remaining
         removed = len(old_games) - len(remaining)
         if removed:

@@ -14,6 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class DraftEngine:
@@ -27,7 +28,7 @@ class DraftEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -44,16 +45,16 @@ class DraftEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        win = game.get("win", False)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        win = game.win
 
         # Pick order node
-        pick_order = game.get("pick_order")
+        pick_order = game.pick_order
         if pick_order:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"pick_{match_id}"),
@@ -63,16 +64,16 @@ class DraftEngine:
                 context={
                     "match_id": match_id,
                     "pick_order": pick_order,
-                    "enemy_pick_order": game.get("enemy_pick_order"),
-                    "side": game.get("side"),
-                    "role": game.get("role"),
-                    "champion": game.get("champion", ""),
+                    "enemy_pick_order": game.enemy_pick_order,
+                    "side": game.side,
+                    "role": game.role,
+                    "champion": game.champion,
                     "win": win,
                 }
             ))
 
         # Side node
-        side = game.get("side")
+        side = game.side
         if side:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"side_{match_id}"),
@@ -87,7 +88,7 @@ class DraftEngine:
             ))
 
         # Role node
-        role = game.get("role")
+        role = game.role
         if role:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"role_{match_id}"),
@@ -102,7 +103,7 @@ class DraftEngine:
             ))
 
         # Champion node
-        champion = game.get("champion")
+        champion = game.champion
         if champion:
             self.nodes.append(EngineNode(
                 node_id=self._make_node_id(f"champ_{match_id}"),
@@ -116,7 +117,7 @@ class DraftEngine:
                 }
             ))
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural draft patterns only.
         No evaluative thresholds — only positional and selection facts.
@@ -126,18 +127,18 @@ class DraftEngine:
         # Precompute champion streaks across all games
         champion_games = defaultdict(list)
         for g in games:
-            champ = g.get("champion")
+            champ = g.champion
             if champ:
                 champion_games[champ].append(g)
 
         for game in games:
-            match_id = game.get("match_id", "")
-            win = game.get("win", False)
-            pick_order = game.get("pick_order")
-            side = game.get("side")
-            role = game.get("role")
-            champion = game.get("champion", "")
-            enemy_pick = game.get("enemy_pick_order")
+            match_id = game.match_id
+            win = game.win
+            pick_order = game.pick_order
+            side = game.side
+            role = game.role
+            champion = game.champion
+            enemy_pick = game.enemy_pick_order
 
             # ── Structural Pattern 1: Pick Position ──
             if pick_order:
@@ -212,7 +213,7 @@ class DraftEngine:
             # Cross-game structural pattern: 3+ games on same champion
             champ_games = champion_games.get(champion, [])
             if len(champ_games) >= 3:
-                champ_wr = sum(1 for g in champ_games if g["win"]) / len(champ_games)
+                champ_wr = sum(1 for g in champ_games if g.win) / len(champ_games)
                 signatures.append(EngineSignature(
                     signature_id=self._make_node_id(f"draft_sig_{match_id}"),
                     signature_type="champion_repetition",
@@ -250,35 +251,35 @@ class DraftEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
-        pick_orders = [g.get("pick_order", 0) for g in games if g.get("pick_order")]
+        pick_orders = [g.pick_order for g in games if g.pick_order]
         if pick_orders:
             distributions["pick_order"] = Distribution.from_values(pick_orders)
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         return {
-            "pick_order": [g.get("pick_order", 0) or 0 for g in games],
-            "enemy_pick_order": [g.get("enemy_pick_order", 0) or 0 for g in games],
-            "side_blue": [1 if g.get("side") == "blue" else 0 for g in games],
-            "side_red": [1 if g.get("side") == "red" else 0 for g in games],
-            "role": [hash(g.get("role", "")) % 100 for g in games],  # Numeric proxy
-            "champion_hash": [hash(g.get("champion", "")) % 1000 for g in games],
+            "pick_order": [g.pick_order or 0 for g in games],
+            "enemy_pick_order": [g.enemy_pick_order or 0 for g in games],
+            "side_blue": [1 if g.side == "blue" else 0 for g in games],
+            "side_red": [1 if g.side == "red" else 0 for g in games],
+            "role": [hash(g.role) % 100 for g in games],  # Numeric proxy
+            "champion_hash": [hash(g.champion) % 1000 for g in games],
         }
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         return min(len(games) / 20, 1.0)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
-        sides = [g.get("side") for g in games if g.get("side")]
-        roles = [g.get("role") for g in games if g.get("role")]
-        champions = [g.get("champion") for g in games if g.get("champion")]
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
+        sides = [g.side for g in games if g.side]
+        roles = [g.role for g in games if g.role]
+        champions = [g.champion for g in games if g.champion]
         return {
             "total_games_analyzed": len(games),
-            "games_with_pick_order": len([g for g in games if g.get("pick_order")]),
+            "games_with_pick_order": len([g for g in games if g.pick_order]),
             "games_with_side": len(sides),
             "games_with_role": len(roles),
             "unique_champions": len(set(champions)),

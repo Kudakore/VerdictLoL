@@ -2,6 +2,8 @@ import requests
 import sys
 import re
 
+from verdict_game_model import Game
+
 # Fix encoding for Windows
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -269,6 +271,70 @@ def show_components(query):
         print(f"  Total:          {total}g")
 
     print()
+
+
+# ── Champion Build Analysis ──────────────────────────────────────────
+
+def analyze_champ_builds(games, champion, item_names=None, min_games=2):
+    """Analyze per-item win rates for a specific champion across cached games.
+
+    Returns dict with:
+        champion: str
+        games_found: int
+        items: [{name, games, wins, wr}]
+    """
+    champ_games = [g for g in games if g.champion.lower() == champion.lower()]
+    if not champ_games:
+        return {"champion": champion, "games_found": 0, "items": []}
+
+    item_wins = {}
+    item_game_counts = {}
+
+    for g in champ_games:
+        won = g.win
+        items = g.build_order
+        if not items:
+            # No build_order data available
+            items = []
+
+        for item_id in items:
+            item_wins[item_id] = item_wins.get(item_id, 0) + (1 if won else 0)
+            item_game_counts[item_id] = item_game_counts.get(item_id, 0) + 1
+
+    results = []
+    for item_id, count in item_game_counts.items():
+        if count < min_games:
+            continue
+        wins = item_wins.get(item_id, 0)
+        wr = round(wins / count * 100)
+        name = item_names.get(item_id, f"Item {item_id}") if item_names else f"Item {item_id}"
+        results.append({"name": name, "games": count, "wins": wins, "wr": wr})
+
+    results.sort(key=lambda x: x["games"], reverse=True)
+
+    return {
+        "champion": champion,
+        "games_found": len(champ_games),
+        "items": results,
+    }
+
+
+def print_champ_builds(games, champion, item_names=None):
+    """Print champion build win rate analysis."""
+    result = analyze_champ_builds(games, champion, item_names)
+
+    if result["games_found"] == 0:
+        print(f"\n  No games found on {champion}.")
+        return
+
+    print(f"\n  {result['champion']} — Item Win Rates ({result['games_found']} games, finished items only)")
+    print(f"  {'Item':<30} {'Games':<8} {'Wins':<8} {'Winrate'}")
+    print(f"  {'─'*60}")
+
+    for item in result["items"]:
+        print(f"  {item['name']:<30} {item['games']:<8} {item['wins']:<8} {item['wr']}%")
+    print()
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

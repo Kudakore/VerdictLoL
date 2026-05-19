@@ -19,9 +19,9 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine_cac
 MAX_CACHE_AGE_HOURS = 24
 
 
-def _games_hash(games: List[Dict]) -> str:
+def _games_hash(games) -> str:
     """Hash game IDs for cache invalidation. New games = new hash = cache miss."""
-    match_ids = sorted(g.get("match_id", "") for g in games)
+    match_ids = sorted(g.match_id for g in games)
     raw = "|".join(match_ids)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -34,7 +34,7 @@ def _cache_path(player_id: str) -> str:
 
 def save_engine_outputs(
     player_id: str,
-    games: List[Dict],
+    games,
     engines: MultiEngineOutput,
     cache_dir: str = None
 ) -> str:
@@ -63,7 +63,7 @@ def save_engine_outputs(
 
 def load_engine_outputs(
     player_id: str,
-    games: List[Dict],
+    games,
     cache_dir: str = None
 ) -> Optional[MultiEngineOutput]:
     """Load engine outputs from cache if valid. Returns None on miss."""

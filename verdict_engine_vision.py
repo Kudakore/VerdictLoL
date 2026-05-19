@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class VisionEngine:
@@ -26,7 +27,7 @@ class VisionEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -43,23 +44,23 @@ class VisionEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        duration = game.get("duration_min", 30)
-        win = game.get("win", False)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        duration = game.duration_min
+        win = game.win
 
-        for metric, node_type in [
+        for attr, node_type in [
             ("vision", "vision_score"),
             ("vision_per_min", "vision_per_min"),
             ("wards_placed", "wards_placed"),
             ("wards_killed", "wards_killed"),
             ("control_wards", "control_wards"),
         ]:
-            value = game.get(metric, 0)
+            value = getattr(game, attr)
             if value:
                 self.nodes.append(EngineNode(
                     node_id=self._make_node_id(f"{node_type}_{match_id}"),
@@ -68,7 +69,7 @@ class VisionEngine:
                     value=value,
                     context={
                         "match_id": match_id,
-                        metric: value,
+                        attr: value,
                         "win": win,
                     }
                 ))
@@ -77,11 +78,11 @@ class VisionEngine:
         enemy_vision = 0
         enemy_wards_placed = 0
         enemy_control_wards = 0
-        for p in game.get("all_players", []):
-            if p.get("team") == "enemy":
-                enemy_vision += p.get("vision", 0)
-                enemy_wards_placed += p.get("wards_placed", 0)
-                enemy_control_wards += p.get("control_wards", 0)
+        for p in game.all_players:
+            if p.team == "enemy":
+                enemy_vision += p.vision
+                enemy_wards_placed += p.wards_placed
+                enemy_control_wards += p.control_wards
 
         if enemy_vision > 0:
             self.nodes.append(EngineNode(
@@ -98,7 +99,7 @@ class VisionEngine:
                 }
             ))
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural vision patterns only.
         No evaluative thresholds — only factual cross-field profiles.
@@ -106,14 +107,14 @@ class VisionEngine:
         signatures = []
 
         for game in games:
-            match_id = game.get("match_id", "")
-            win = game.get("win", False)
-            duration = game.get("duration_min", 30)
-            vision = game.get("vision", 0) or 0
-            vpm = game.get("vision_per_min", 0) or 0
-            wp = game.get("wards_placed", 0) or 0
-            wk = game.get("wards_killed", 0) or 0
-            cw = game.get("control_wards", 0) or 0
+            match_id = game.match_id
+            win = game.win
+            duration = game.duration_min
+            vision = game.vision or 0
+            vpm = game.vision_per_min or 0
+            wp = game.wards_placed or 0
+            wk = game.wards_killed or 0
+            cw = game.control_wards or 0
 
             # ── Structural Pattern 1: Vision Profile ──
             if vision > 0 or vpm > 0:
@@ -142,10 +143,10 @@ class VisionEngine:
             # ── Structural Pattern 2: Enemy Vision Contrast ──
             enemy_vision = 0
             enemy_wards = 0
-            for p in game.get("all_players", []):
-                if p.get("team") == "enemy":
-                    enemy_vision += p.get("vision", 0) or 0
-                    enemy_wards += p.get("wards_placed", 0) or 0
+            for p in game.all_players:
+                if p.team == "enemy":
+                    enemy_vision += p.vision or 0
+                    enemy_wards += p.wards_placed or 0
 
             if enemy_vision > 0:
                 signatures.append(EngineSignature(
@@ -168,43 +169,43 @@ class VisionEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
-        for metric, label in [
+        for attr, label in [
             ("vision", "vision_score"),
             ("vision_per_min", "vision_per_min"),
             ("wards_placed", "wards_placed"),
             ("wards_killed", "wards_killed"),
             ("control_wards", "control_wards"),
         ]:
-            vals = [g.get(metric, 0) for g in games if g.get(metric)]
+            vals = [getattr(g, attr) for g in games if getattr(g, attr)]
             if vals:
                 distributions[label] = Distribution.from_values(vals)
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         return {
-            "vision": [g.get("vision", 0) or 0 for g in games],
-            "vision_per_min": [g.get("vision_per_min", 0) or 0 for g in games],
-            "wards_placed": [g.get("wards_placed", 0) or 0 for g in games],
-            "wards_killed": [g.get("wards_killed", 0) or 0 for g in games],
-            "control_wards": [g.get("control_wards", 0) or 0 for g in games],
+            "vision": [g.vision or 0 for g in games],
+            "vision_per_min": [g.vision_per_min or 0 for g in games],
+            "wards_placed": [g.wards_placed or 0 for g in games],
+            "wards_killed": [g.wards_killed or 0 for g in games],
+            "control_wards": [g.control_wards or 0 for g in games],
         }
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         factors = [min(len(games) / 20, 1.0)]
-        complete = sum(1 for g in games if g.get("vision")) / len(games)
+        complete = sum(1 for g in games if g.vision) / len(games)
         factors.append(complete)
         return statistics.mean(factors)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
         return {
             "total_games_analyzed": len(games),
-            "games_with_vision_data": len([g for g in games if g.get("vision")]),
-            "games_with_ward_kill_data": len([g for g in games if g.get("wards_killed")]),
-            "total_vision_recorded": sum(g.get("vision", 0) for g in games),
+            "games_with_vision_data": len([g for g in games if g.vision]),
+            "games_with_ward_kill_data": len([g for g in games if g.wards_killed]),
+            "total_vision_recorded": sum(g.vision for g in games),
             "total_nodes_created": len(self.nodes),
             "total_signatures_detected": len(self.signatures),
         }

@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from verdict_engine_base import Distribution, EngineNode, EngineSignature, EngineOutput, run_engine_from_cache
+from verdict_game_model import Game
 
 
 class ObjectiveEngine:
@@ -26,7 +27,7 @@ class ObjectiveEngine:
         self.node_counter += 1
         return f"{prefix}_{self.node_counter}"
 
-    def analyze(self, games: List[Dict]) -> EngineOutput:
+    def analyze(self, games: List[Game]) -> EngineOutput:
         self.nodes = []
         self.signatures = []
         self.node_counter = 0
@@ -43,22 +44,22 @@ class ObjectiveEngine:
             signatures=self.signatures,
             correlation_space=correlation_space,
             confidence=self._calculate_confidence(games),
-            source_games=[g.get("match_id", "") for g in games],
+            source_games=[g.match_id for g in games],
             raw_metrics=self._extract_raw_metrics(games)
         )
 
-    def _extract_game_nodes(self, game: Dict):
-        match_id = game.get("match_id", "unknown")
-        duration = game.get("duration_min", 30)
-        win = game.get("win", False)
+    def _extract_game_nodes(self, game: Game):
+        match_id = game.match_id
+        duration = game.duration_min
+        win = game.win
 
         # Personal objective nodes
-        for metric, node_type in [
+        for attr, node_type in [
             ("turret_kills", "turret_kill"),
             ("inhibitor_kills", "inhibitor_kill"),
             ("objectives_stolen", "objective_stolen"),
         ]:
-            value = game.get(metric, 0)
+            value = getattr(game, attr)
             if value:
                 self.nodes.append(EngineNode(
                     node_id=self._make_node_id(f"{node_type}_{match_id}"),
@@ -67,17 +68,17 @@ class ObjectiveEngine:
                     value=value,
                     context={
                         "match_id": match_id,
-                        metric: value,
+                        attr: value,
                         "win": win,
                     }
                 ))
 
         # Team objective nodes
-        my_team = game.get("my_team", {})
-        enemy_team = game.get("enemy_team", {})
+        my_team = game.my_team
+        enemy_team = game.enemy_team
         for team_name, team_data in [("my", my_team), ("enemy", enemy_team)]:
             for obj_type in ["dragon_kills", "baron_kills", "tower_kills", "rift_herald_kills"]:
-                count = team_data.get(obj_type, 0)
+                count = getattr(team_data, obj_type)
                 if count > 0:
                     self.nodes.append(EngineNode(
                         node_id=self._make_node_id(f"{team_name}_{obj_type}_{match_id}"),
@@ -95,7 +96,7 @@ class ObjectiveEngine:
 
             # First flags
             for first_type in ["first_blood", "first_tower", "first_dragon", "first_baron"]:
-                if team_data.get(first_type):
+                if getattr(team_data, first_type):
                     self.nodes.append(EngineNode(
                         node_id=self._make_node_id(f"{team_name}_{first_type}_{match_id}"),
                         timestamp_min=0,
@@ -109,7 +110,7 @@ class ObjectiveEngine:
                         }
                     ))
 
-    def _detect_signatures(self, games: List[Dict]):
+    def _detect_signatures(self, games: List[Game]):
         """
         Detect structural objective patterns only.
         No evaluative thresholds — only factual team and personal objective records.
@@ -117,14 +118,14 @@ class ObjectiveEngine:
         signatures = []
 
         for game in games:
-            match_id = game.get("match_id", "")
-            win = game.get("win", False)
-            duration = game.get("duration_min", 30)
-            my_team = game.get("my_team", {})
-            enemy_team = game.get("enemy_team", {})
-            turret_kills = game.get("turret_kills", 0)
-            inhibitor_kills = game.get("inhibitor_kills", 0)
-            objectives_stolen = game.get("objectives_stolen", 0)
+            match_id = game.match_id
+            win = game.win
+            duration = game.duration_min
+            my_team = game.my_team
+            enemy_team = game.enemy_team
+            turret_kills = game.turret_kills
+            inhibitor_kills = game.inhibitor_kills
+            objectives_stolen = game.objectives_stolen
 
             # ── Structural Pattern 1: Personal Objective Profile ──
             if any([turret_kills, inhibitor_kills, objectives_stolen]):
@@ -145,71 +146,68 @@ class ObjectiveEngine:
                 ))
 
             # ── Structural Pattern 2: Team Objective Profile ──
-            if my_team:
-                features = {
-                    "dragon_kills": my_team.get("dragon_kills", 0),
-                    "baron_kills": my_team.get("baron_kills", 0),
-                    "tower_kills": my_team.get("tower_kills", 0),
-                    "rift_herald_kills": my_team.get("rift_herald_kills", 0),
-                    "first_blood": my_team.get("first_blood", False),
-                    "first_tower": my_team.get("first_tower", False),
-                    "first_dragon": my_team.get("first_dragon", False),
-                    "first_baron": my_team.get("first_baron", False),
-                    "game_duration": duration,
-                    "win": win,
-                }
-                signatures.append(EngineSignature(
-                    signature_id=self._make_node_id(f"obj_sig_{match_id}"),
-                    signature_type="team_objective_profile",
-                    nodes=[],
-                    start_min=0,
-                    end_min=duration,
-                    features=features,
-                    confidence=0.85
-                ))
+            features = {
+                "dragon_kills": my_team.dragon_kills,
+                "baron_kills": my_team.baron_kills,
+                "tower_kills": my_team.tower_kills,
+                "rift_herald_kills": my_team.rift_herald_kills,
+                "first_blood": my_team.first_blood,
+                "first_tower": my_team.first_tower,
+                "first_dragon": my_team.first_dragon,
+                "first_baron": my_team.first_baron,
+                "game_duration": duration,
+                "win": win,
+            }
+            signatures.append(EngineSignature(
+                signature_id=self._make_node_id(f"obj_sig_{match_id}"),
+                signature_type="team_objective_profile",
+                nodes=[],
+                start_min=0,
+                end_min=duration,
+                features=features,
+                confidence=0.85
+            ))
 
             # ── Structural Pattern 3: Enemy Objective Profile ──
-            if enemy_team:
-                signatures.append(EngineSignature(
-                    signature_id=self._make_node_id(f"obj_sig_{match_id}"),
-                    signature_type="enemy_objective_profile",
-                    nodes=[],
-                    start_min=0,
-                    end_min=duration,
-                    features={
-                        "dragon_kills": enemy_team.get("dragon_kills", 0),
-                        "baron_kills": enemy_team.get("baron_kills", 0),
-                        "tower_kills": enemy_team.get("tower_kills", 0),
-                        "rift_herald_kills": enemy_team.get("rift_herald_kills", 0),
-                        "first_blood": enemy_team.get("first_blood", False),
-                        "first_tower": enemy_team.get("first_tower", False),
-                        "first_dragon": enemy_team.get("first_dragon", False),
-                        "first_baron": enemy_team.get("first_baron", False),
-                        "game_duration": duration,
-                        "win": win,
-                    },
-                    confidence=0.85
-                ))
-
-            # ── Structural Pattern 4: Objective Contrast ──
-            if my_team and enemy_team:
-                features = {
-                    "dragon_differential": my_team.get("dragon_kills", 0) - enemy_team.get("dragon_kills", 0),
-                    "baron_differential": my_team.get("baron_kills", 0) - enemy_team.get("baron_kills", 0),
-                    "tower_differential": my_team.get("tower_kills", 0) - enemy_team.get("tower_kills", 0),
-                    "rift_herald_differential": my_team.get("rift_herald_kills", 0) - enemy_team.get("rift_herald_kills", 0),
+            signatures.append(EngineSignature(
+                signature_id=self._make_node_id(f"obj_sig_{match_id}"),
+                signature_type="enemy_objective_profile",
+                nodes=[],
+                start_min=0,
+                end_min=duration,
+                features={
+                    "dragon_kills": enemy_team.dragon_kills,
+                    "baron_kills": enemy_team.baron_kills,
+                    "tower_kills": enemy_team.tower_kills,
+                    "rift_herald_kills": enemy_team.rift_herald_kills,
+                    "first_blood": enemy_team.first_blood,
+                    "first_tower": enemy_team.first_tower,
+                    "first_dragon": enemy_team.first_dragon,
+                    "first_baron": enemy_team.first_baron,
                     "game_duration": duration,
                     "win": win,
-                }
-                signatures.append(EngineSignature(
-                    signature_id=self._make_node_id(f"obj_sig_{match_id}"),
-                    signature_type="objective_contrast",
-                    nodes=[],
-                    start_min=0,
-                    end_min=duration,
-                    features=features,
-                    confidence=0.9
-                ))
+                },
+                confidence=0.85
+            ))
+
+            # ── Structural Pattern 4: Objective Contrast ──
+            features = {
+                "dragon_differential": my_team.dragon_kills - enemy_team.dragon_kills,
+                "baron_differential": my_team.baron_kills - enemy_team.baron_kills,
+                "tower_differential": my_team.tower_kills - enemy_team.tower_kills,
+                "rift_herald_differential": my_team.rift_herald_kills - enemy_team.rift_herald_kills,
+                "game_duration": duration,
+                "win": win,
+            }
+            signatures.append(EngineSignature(
+                signature_id=self._make_node_id(f"obj_sig_{match_id}"),
+                signature_type="objective_contrast",
+                nodes=[],
+                start_min=0,
+                end_min=duration,
+                features=features,
+                confidence=0.9
+            ))
 
             # ── Structural Pattern 5: Objective Steal Event ──
             if objectives_stolen > 0:
@@ -229,13 +227,13 @@ class ObjectiveEngine:
 
             # ── Structural Pattern 6: First Objective Sequence ──
             first_flags = []
-            if my_team.get("first_blood"):
+            if my_team.first_blood:
                 first_flags.append("first_blood")
-            if my_team.get("first_tower"):
+            if my_team.first_tower:
                 first_flags.append("first_tower")
-            if my_team.get("first_dragon"):
+            if my_team.first_dragon:
                 first_flags.append("first_dragon")
-            if my_team.get("first_baron"):
+            if my_team.first_baron:
                 first_flags.append("first_baron")
             if first_flags:
                 signatures.append(EngineSignature(
@@ -271,52 +269,53 @@ class ObjectiveEngine:
 
         self.signatures = signatures
 
-    def _build_distributions(self, games: List[Dict]) -> Dict[str, Distribution]:
+    def _build_distributions(self, games: List[Game]) -> Dict[str, Distribution]:
         distributions = {}
-        for metric, label in [
+        for attr, label in [
             ("turret_kills", "turret_kills"),
             ("inhibitor_kills", "inhibitor_kills"),
             ("objectives_stolen", "objectives_stolen"),
         ]:
-            vals = [g.get(metric, 0) for g in games if g.get(metric)]
+            vals = [getattr(g, attr) for g in games if getattr(g, attr)]
             if vals:
                 distributions[label] = Distribution.from_values(vals)
 
         # Team objective distributions
-        for team_key, prefix in [("my_team", "team"), ("enemy_team", "enemy")]:
+        for team_attr, prefix in [("my_team", "team"), ("enemy_team", "enemy")]:
             for obj in ["dragon_kills", "baron_kills", "tower_kills", "rift_herald_kills"]:
-                vals = [g.get(team_key, {}).get(obj, 0) for g in games]
+                vals = [getattr(getattr(g, team_attr), obj) for g in games]
                 if any(vals):
                     distributions[f"{prefix}_{obj}"] = Distribution.from_values(vals)
 
         return distributions
 
-    def _build_correlation_space(self, games: List[Dict]) -> Dict[str, List[float]]:
+    def _build_correlation_space(self, games: List[Game]) -> Dict[str, List[float]]:
         space = {}
-        space["turret_kills"] = [g.get("turret_kills", 0) or 0 for g in games]
-        space["inhibitor_kills"] = [g.get("inhibitor_kills", 0) or 0 for g in games]
-        space["objectives_stolen"] = [g.get("objectives_stolen", 0) or 0 for g in games]
-        for team_key, prefix in [("my_team", "team"), ("enemy_team", "enemy")]:
+        space["turret_kills"] = [g.turret_kills or 0 for g in games]
+        space["inhibitor_kills"] = [g.inhibitor_kills or 0 for g in games]
+        space["objectives_stolen"] = [g.objectives_stolen or 0 for g in games]
+        for team_attr, prefix in [("my_team", "team"), ("enemy_team", "enemy")]:
             for obj in ["dragon_kills", "baron_kills", "tower_kills", "rift_herald_kills"]:
-                space[f"{prefix}_{obj}"] = [g.get(team_key, {}).get(obj, 0) or 0 for g in games]
+                space[f"{prefix}_{obj}"] = [getattr(getattr(g, team_attr), obj) or 0 for g in games]
             for first in ["first_blood", "first_tower", "first_dragon", "first_baron"]:
-                space[f"{prefix}_{first}"] = [1 if g.get(team_key, {}).get(first) else 0 for g in games]
+                space[f"{prefix}_{first}"] = [1 if getattr(getattr(g, team_attr), first) else 0 for g in games]
         return space
 
-    def _calculate_confidence(self, games: List[Dict]) -> float:
+    def _calculate_confidence(self, games: List[Game]) -> float:
         if not games:
             return 0.0
         factors = [min(len(games) / 20, 1.0)]
-        complete = sum(1 for g in games if g.get("my_team") or g.get("enemy_team")) / len(games)
+        # my_team always exists as TeamObjectives (default_factory), so always truthy
+        complete = sum(1 for g in games if g.my_team or g.enemy_team) / len(games)
         factors.append(complete)
         return statistics.mean(factors)
 
-    def _extract_raw_metrics(self, games: List[Dict]) -> Dict:
+    def _extract_raw_metrics(self, games: List[Game]) -> Dict:
         return {
             "total_games_analyzed": len(games),
-            "games_with_objective_data": len([g for g in games if g.get("my_team")]),
-            "total_turret_kills": sum(g.get("turret_kills", 0) for g in games),
-            "total_inhibitor_kills": sum(g.get("inhibitor_kills", 0) for g in games),
+            "games_with_objective_data": len([g for g in games if g.my_team]),
+            "total_turret_kills": sum(g.turret_kills for g in games),
+            "total_inhibitor_kills": sum(g.inhibitor_kills for g in games),
             "total_nodes_created": len(self.nodes),
             "total_signatures_detected": len(self.signatures),
         }
