@@ -40,6 +40,11 @@ class AnalysisService:
         self._pipeline_ready = False
 
     @property
+    def pipeline_ready(self):
+        """Whether the analysis pipeline has been initialized."""
+        return self._pipeline_ready
+
+    @property
     def pairs(self):
         """Cached (game, verdict) pairs. Runs pipeline if needed."""
         self._ensure_pipeline()

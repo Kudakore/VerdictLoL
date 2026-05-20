@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 
@@ -31,12 +32,36 @@ POSITIONS = {
 # For small batches (under 20 requests), this runs at full speed.
 # For large batches (fetch 50+ games), it throttles to stay within limits.
 
+# ── Riot API Error ────────────────────────────────────────────────────
+
+class APIError(Exception):
+    """Raised when the Riot API returns a non-success status code."""
+    def __init__(self, status_code, url, body_snippet=""):
+        self.status_code = status_code
+        self.url = url
+        self.body_snippet = body_snippet
+        super().__init__(f"API error {status_code} from {url}: {body_snippet}")
+
+
+# ── Adaptive rate limiter ──────────────────────────────────────────
+# Riot API limits: 20 req/s (development key), 100 req/s (personal key).
+# Instead of a flat 1.5s delay per request, we use a sliding window:
+#   - Track timestamps of recent requests
+#   - If well within budget, fire immediately (no delay)
+#   - If approaching the limit, add minimal delay to stay within budget
+#   - If we get a 429, back off and retry
+#
+# For small batches (under 20 requests), this runs at full speed.
+# For large batches (fetch 50+ games), it throttles to stay within limits.
+# Thread-safe: all state protected by _rate_lock.
+
 _RATE_WINDOW = 1.0          # sliding window in seconds
 _RATE_MAX_REQUESTS = 20      # max requests per window (conservative for dev key)
 _RATE_MIN_DELAY = 0.05       # minimum gap between requests (50ms)
 _RATE_RETRY_DELAY = 2.0      # base delay on 429 response
 _RATE_RETRY_MAX = 3          # max retries on 429
 
+_rate_lock = threading.Lock()
 _request_timestamps = []
 _429_backoff_until = 0
 
@@ -44,74 +69,113 @@ _429_backoff_until = 0
 def rate_limited_get(url):
     """Make a rate-limited GET request to the Riot API.
 
-    Uses adaptive throttling:
+    Uses adaptive throttling with thread-safe state:
     - Tracks recent requests in a sliding window
     - Fires immediately if well within budget
     - Adds minimal delay if approaching the limit
     - Backs off on 429 responses
+    - Raises APIError for non-success status codes (>= 400)
     """
     global _429_backoff_until
 
-    # If we're in a 429 backoff period, wait it out
-    if _429_backoff_until:
-        wait = _429_backoff_until - time.time()
-        if wait > 0:
-            time.sleep(wait)
-        _429_backoff_until = 0
+    # ── Rate-limit scheduling (under lock) ──
+    with _rate_lock:
+        # If we're in a 429 backoff period, wait it out
+        if _429_backoff_until:
+            wait = _429_backoff_until - time.time()
+            if wait > 0:
+                # Release lock during sleep, then re-check
+                pass  # sleep outside lock below
+            else:
+                _429_backoff_until = 0
 
-    # Clean old timestamps outside the window
-    now = time.time()
-    global _request_timestamps
-    _request_timestamps = [t for t in _request_timestamps if now - t < _RATE_WINDOW]
+    # Sleep for 429 backoff outside the lock
+    with _rate_lock:
+        if _429_backoff_until:
+            wait = _429_backoff_until - time.time()
+    if wait > 0:
+        time.sleep(wait)
+        with _rate_lock:
+            _429_backoff_until = 0
 
-    # Calculate delay needed to stay within budget
-    requests_in_window = len(_request_timestamps)
-    if requests_in_window >= _RATE_MAX_REQUESTS:
-        # At capacity — wait until oldest request falls out of window
-        oldest = _request_timestamps[0]
-        wait = _RATE_WINDOW - (now - oldest) + _RATE_MIN_DELAY
-        if wait > 0:
-            time.sleep(wait)
+    with _rate_lock:
+        # Clean old timestamps outside the window
         now = time.time()
+        global _request_timestamps
         _request_timestamps = [t for t in _request_timestamps if now - t < _RATE_WINDOW]
-    elif requests_in_window > 0:
-        # Some requests in window — ensure minimum gap
-        last_request = _request_timestamps[-1]
-        gap = now - last_request
-        if gap < _RATE_MIN_DELAY:
-            time.sleep(_RATE_MIN_DELAY - gap)
-    # else: first request, no delay
 
-    now = time.time()
-    _request_timestamps.append(now)
+        # Calculate delay needed to stay within budget
+        requests_in_window = len(_request_timestamps)
+        if requests_in_window >= _RATE_MAX_REQUESTS:
+            # At capacity — wait until oldest request falls out of window
+            oldest = _request_timestamps[0]
+            wait = _RATE_WINDOW - (now - oldest) + _RATE_MIN_DELAY
+        elif requests_in_window > 0:
+            # Some requests in window — ensure minimum gap
+            last_request = _request_timestamps[-1]
+            gap = now - last_request
+            wait = max(0, _RATE_MIN_DELAY - gap)
+        else:
+            wait = 0
 
-    # Make the request with 429 retry logic
+    # Sleep outside the lock
+    if wait > 0:
+        time.sleep(wait)
+
+    # Record this request's timestamp (under lock)
+    with _rate_lock:
+        now = time.time()
+        _request_timestamps.append(now)
+
+    # ── Make the request (no lock — network I/O) ──
     for attempt in range(_RATE_RETRY_MAX):
-        resp = requests.get(url, headers=HEADERS)
+        resp = requests.get(url, headers=HEADERS, timeout=30)
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", _RATE_RETRY_DELAY))
-            _429_backoff_until = time.time() + retry_after
+            with _rate_lock:
+                _429_backoff_until = time.time() + retry_after
             if attempt < _RATE_RETRY_MAX - 1:
                 time.sleep(retry_after)
-                _429_backoff_until = 0
+                with _rate_lock:
+                    _429_backoff_until = 0
                 continue
+            # Final attempt failed with 429
+            raise APIError(429, url, "Rate limit exceeded after retries")
+
+        # Non-429 error status
+        if resp.status_code >= 400:
+            body = resp.text[:200]
+            raise APIError(resp.status_code, url, body)
+
         return resp
 
     return resp
 
 def get_puuid():
     url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{GAME_NAME}/{TAG_LINE}"
-    return rate_limited_get(url).json()["puuid"]
+    resp = rate_limited_get(url)
+    data = resp.json()
+    puuid = data.get("puuid")
+    if not puuid:
+        raise APIError(404, url, f"No puuid in response: {str(data)[:200]}")
+    return puuid
 
 def get_summoner_id(puuid):
     url = f"https://{PLATFORM}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/{puuid}"
-    return rate_limited_get(url).json().get("id")
+    resp = rate_limited_get(url)
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise APIError(500, url, f"Expected dict, got {type(data).__name__}")
+    return data.get("id")
 
 def get_match_ids(puuid, count=50):
     all_matches = []
     for qid in QUEUE_FILTERS:
         url = f"https://{REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?queue={qid}&count={count}"
-        result = rate_limited_get(url).json()
+        try:
+            result = rate_limited_get(url).json()
+        except APIError:
+            continue
         if isinstance(result, list):
             all_matches.extend(result)
     return sorted(list(dict.fromkeys(all_matches)), reverse=True)
@@ -157,19 +221,21 @@ def get_current_game(puuid=None):
     if not summoner_id:
         return None
     url = f"https://{PLATFORM}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/{summoner_id}"
-    resp = requests.get(url, headers=HEADERS)
-    if resp.status_code == 404:
-        return None
-    if resp.status_code != 200:
-        return None
+    try:
+        resp = rate_limited_get(url)
+    except APIError as e:
+        if e.status_code == 404:
+            return None  # Not in game
+        raise
     return resp.json()
 
 
 def resolve_puuid_to_riot_id(puuid):
     """Convert PUUID to Riot ID (Name#Tag). Returns None on failure."""
     url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-puuid/{puuid}"
-    resp = requests.get(url, headers=HEADERS)
-    if resp.status_code != 200:
+    try:
+        resp = rate_limited_get(url)
+    except APIError:
         return None
     data = resp.json()
     game_name = data.get("gameName")
@@ -180,9 +246,9 @@ def resolve_puuid_to_riot_id(puuid):
 
 
 def get_item_data():
-    version = requests.get("https://ddragon.leagueoflegends.com/api/versions.json").json()[0]
+    version = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=15).json()[0]
     url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json"
-    data = requests.get(url).json()["data"]
+    data = requests.get(url, timeout=15).json()["data"]
     names = {int(k): v["name"] for k, v in data.items()}
     components = set()
     for v in data.values():
@@ -624,12 +690,15 @@ def build_match_record(match_id, match, timeline, puuid, item_names, components)
 
 def load_cache():
     if os.path.exists(CACHE_PATH):
-        with open(CACHE_PATH, "r", encoding="utf-8") as f:
-            cache = json.load(f)
-        # Convert game dicts to Game objects
-        if "games" in cache:
-            cache["games"] = [Game.from_dict(g) if isinstance(g, dict) else g for g in cache["games"]]
-        return cache
+        try:
+            with open(CACHE_PATH, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            # Convert game dicts to Game objects
+            if "games" in cache:
+                cache["games"] = [Game.from_dict(g) if isinstance(g, dict) else g for g in cache["games"]]
+            return cache
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Warning: Cache file corrupted ({e}). Starting with empty cache.")
     return {"puuid": None, "games": [], "cached_ids": [], "rank_history": [], "last_updated": None}
 
 def save_cache(cache):
