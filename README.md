@@ -1,4 +1,4 @@
-# FaceCheck
+# VerdictLoL
 
 A personal League of Legends diagnostic system. Analyzes your match history to surface causal relationships between early-game decisions and outcomes — not just stats, but *why* you lost.
 
