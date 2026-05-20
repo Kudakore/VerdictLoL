@@ -941,7 +941,7 @@ def print_intel_profile(champion_name):
 
     if not result["found"]:
         print(f"\n  No intel profile found for {champion_name}.")
-        print(f"  Run 'face update' to refresh the vault.")
+        print(f"  Run 'verdict update' to refresh the vault.")
         return
 
     print(f"\n  {'='*62}")

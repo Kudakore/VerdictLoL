@@ -1008,7 +1008,7 @@ class SynthesisLayer:
             mechanism=mechanism,
             pattern_insight=pattern_insight,
             drill_down_available=True,
-            drill_down_prompt="Run 'face game <id> --deep' for full node analysis",
+            drill_down_prompt="Run 'verdict game <id> --deep' for full node analysis",
             observations=observations
         )
 
@@ -1734,7 +1734,7 @@ if __name__ == "__main__":
     draft_output = run_draft_engine()
 
     if not death_output:
-        print("No cache found. Run 'face fetch' first.")
+        print("No cache found. Run 'verdict fetch' first.")
         exit(1)
 
     # Load cache for games and player_id
@@ -1746,7 +1746,7 @@ if __name__ == "__main__":
         games = cache.get("games", [])
         player_id = cache.get("puuid", "test_player")
     except FileNotFoundError:
-        print("No cache found. Run 'face fetch' first.")
+        print("No cache found. Run 'verdict fetch' first.")
         exit(1)
 
     if not games:

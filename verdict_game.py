@@ -50,12 +50,12 @@ if __name__ == "__main__":
     cache = load_cache()
 
     if not cache.get("games"):
-        print("No cached games found. Run: face fetch")
+        print("No cached games found. Run: verdict fetch")
         sys.exit(1)
 
     args = sys.argv[1:]
     if not args:
-        print("Usage: face lastgame | face game N | face games [N] | face recent [solo|flex] [N] | face pool | face matchups | face counter [champ] | face intel [champ] | face guide | face scout Name#Tag | face compare Name#Tag | face enemy | face worst [champ] | face best [champ] | face item [name] | face components [name] | face champ [name] | face builds [champ] | face impact")
+        print("Usage: verdict lastgame | verdict game N | verdict games [N] | verdict recent [solo|flex] [N] | verdict pool | verdict matchups | verdict counter [champ] | verdict intel [champ] | verdict guide | verdict scout Name#Tag | verdict compare Name#Tag | verdict enemy | verdict worst [champ] | verdict best [champ] | verdict item [name] | verdict components [name] | verdict champ [name] | verdict builds [champ] | verdict impact")
         sys.exit(1)
 
     mode = args[0]
@@ -95,7 +95,7 @@ if __name__ == "__main__":
         sys.exit(1)
     player_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
 
-    if mode == "last":
+    if mode in ("last", "lastgame"):
         if not ranked:
             print("No ranked games found.")
             sys.exit(1)
@@ -166,7 +166,7 @@ if __name__ == "__main__":
             print("Example: verdict counter Warwick")
             sys.exit(1)
         if not INTEL_AVAILABLE:
-            print("Champion intel unavailable. Run 'face update' to populate the vault.")
+            print("Champion intel unavailable. Run 'verdict update' to populate the vault.")
             sys.exit(1)
         print_counter_command(champion, game_history=historical)
 
@@ -176,7 +176,7 @@ if __name__ == "__main__":
             print("Example: verdict intel Warwick")
             sys.exit(1)
         if not INTEL_AVAILABLE:
-            print("Champion intel unavailable. Run 'face update' to populate the vault.")
+            print("Champion intel unavailable. Run 'verdict update' to populate the vault.")
             sys.exit(1)
         print_intel_profile(champion)
 
@@ -228,7 +228,7 @@ if __name__ == "__main__":
             print("Example: verdict compare Faker#KR1 10")
             sys.exit(1)
         if not cache.get("games"):
-            print("No cached games found. Run: face fetch")
+            print("No cached games found. Run: verdict fetch")
             sys.exit(1)
 
         compare_count = count or 20

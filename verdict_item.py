@@ -200,8 +200,8 @@ def print_item_details(items, item):
 def show_item(query):
     """Main entry: fetch and display item."""
     if not query or len(query) < 2:
-        print("Usage: face item 'item name'")
-        print("Example: face item collector")
+        print("Usage: verdict item 'item name'")
+        print("Example: verdict item collector")
         return
 
     items = fetch_items()
@@ -217,7 +217,7 @@ def show_item(query):
 def show_components(query):
     """Show full component tree with gold breakdown."""
     if not query or len(query) < 2:
-        print("Usage: face components 'item name'")
+        print("Usage: verdict components 'item name'")
         return
 
     items = fetch_items()
@@ -345,9 +345,9 @@ if __name__ == "__main__":
         print("  python verdict_item.py components 'item name'")
         print()
         print("Examples:")
-        print("  face item collector")
-        print("  face item 'trinity force'")
-        print("  face components collector")
+        print("  verdict item collector")
+        print("  verdict item 'trinity force'")
+        print("  verdict components collector")
         sys.exit(0)
 
     # Handle char-split from PowerShell ("collector" -> ["c", "o", "l", ...])
@@ -364,7 +364,7 @@ if __name__ == "__main__":
         show_components(query)
         sys.exit(0)
     elif raw_args[0].lower() == "components":
-        print("Usage: face components 'item name'")
+        print("Usage: verdict components 'item name'")
         sys.exit(1)
     else:
         query = " ".join(raw_args)

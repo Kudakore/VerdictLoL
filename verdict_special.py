@@ -219,7 +219,7 @@ def analyze_matchups(games, champion=None):
         elif early_d >= losses_n * 0.5:
             p["note"] = f"{early_d} of {losses_n} losses to {ec} involve early deaths — they dictate tempo before 15min."
         else:
-            p["note"] = f"Losing record against {ec}. Run: face select {ec}"
+            p["note"] = f"Losing record against {ec}. Run: verdict select {ec}"
 
     # Interpretation notes for winning matchups
     for p in favorable:
@@ -379,37 +379,37 @@ def analyze_guide():
             {
                 "title": "AFTER A LOSS",
                 "lines": [
-                    "Run: face lastgame",
+                    "Run: verdict lastgame",
                     "Check the VERDICT section — it names the primary loss factor.",
                     "If the loss was unwinnable (team feed pattern), note it and move on.",
-                    "If it was your early game, run: face Viego (or your champion)",
+                    "If it was your early game, run: verdict Viego (or your champion)",
                     "Look for the CS@15 gap and early death patterns. Fix those first.",
                 ],
             },
             {
                 "title": "BEFORE QUEUING",
                 "lines": [
-                    "Run: face pool",
+                    "Run: verdict pool",
                     "Play your PLAY verdict champions. Avoid AVOID.",
                     "If CONDITIONAL appears, play only in low-stakes games while trending up.",
-                    "Run: face matchups to see your hardest enemy champions.",
+                    "Run: verdict matchups to see your hardest enemy champions.",
                     "If you see one of your losing matchups, dodge or adjust your approach.",
                 ],
             },
             {
                 "title": "IMPROVING A CHAMPION",
                 "lines": [
-                    "Run: face Viego (or champion name)",
+                    "Run: verdict Viego (or champion name)",
                     "Look for CRITICAL findings — these are your known losing patterns.",
-                    "Run: face Viego worst for the blunt summary of what to stop doing.",
-                    "Run: face Viego best for what to keep doing.",
+                    "Run: verdict Viego worst for the blunt summary of what to stop doing.",
+                    "Run: verdict Viego best for what to keep doing.",
                     "Compare the two to identify your personal improvement edges.",
                 ],
             },
             {
                 "title": "SCOUTING AN OPPONENT",
                 "lines": [
-                    "Run: face scout Name#TAG",
+                    "Run: verdict scout Name#TAG",
                     "Check their pool health and recent trends.",
                     "If they are on a declining trend, exploit the tilt.",
                     "If they have strong matchups against your pick, reconsider or adjust playstyle.",
@@ -418,20 +418,20 @@ def analyze_guide():
             {
                 "title": "UNDERSTANDING A CHAMPION",
                 "lines": [
-                    "Run: face counter [champion]",
+                    "Run: verdict counter [champion]",
                     "Shows what beats them, what they have, and what items counter them.",
-                    "Run: face intel [champion]",
+                    "Run: verdict intel [champion]",
                     "Full kit breakdown, threat window, and your personal matchup data if available.",
                 ],
             },
             {
                 "title": "MANAGING YOUR CACHE",
                 "lines": [
-                    "Run: face fetch 50",
+                    "Run: verdict fetch 50",
                     "Pulls latest ranked games. Do this after every session.",
-                    "Run: face fetch 50 --force",
+                    "Run: verdict fetch 50 --force",
                     "Rebuilds entire cache. Use if you suspect data corruption.",
-                    "Run: face clean",
+                    "Run: verdict clean",
                     "Removes duplicates after force fetch. Safe to run anytime.",
                 ],
             },
@@ -545,7 +545,7 @@ def print_bans(games):
         rates = ", ".join(f"{p['loss_rate']}%" for p in top3[:3])
         print(f"  Loss rates: {rates}")
         if len(result["high_ban"]) > 3:
-            print(f"  ({len(result['high_ban']) - 3} more high-loss champions — run 'face matchups' for full list)")
+            print(f"  ({len(result['high_ban']) - 3} more high-loss champions — run 'verdict matchups' for full list)")
     elif result["medium_ban"]:
         top = result["medium_ban"][0]
         print(f"  No 60%+ loss champions found. Consider: {top['champion']} ({top['loss_rate']}% loss)")
