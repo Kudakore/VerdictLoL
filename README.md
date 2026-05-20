@@ -1,77 +1,165 @@
-# VerdictLoL
+# Verdict
 
 A personal League of Legends diagnostic system. Analyzes your match history to surface causal relationships between early-game decisions and outcomes — not just stats, but *why* you lost.
 
 Designed for junglers at heart. Works for any role just the same.
 
-Status: Work in Progress (Super Duper Alpha)
-- As a CLI tool, it pretty much works. It is being configured and refined every day. The goal is to have a coaching companion app that does what no other companion app comes close to, besides sitting down and watching your gameplay with you.
+## What It Does
 
-## Features
+Verdict runs your ranked games through 7 domain engines (Death, Economy, Combat, Durability, Vision, Objective, Draft) and synthesizes the results into actionable verdicts relative to your personal baselines.
 
-- **Deep game analysis** across 7 domain engines: Death, Economy, Combat, Durability, Vision, Objective, Draft
-- **Synthesis layer** that correlates engine outputs into actionable verdicts
-- **Scout any player** by Riot ID with matchup breakdowns
-- **Champion pool health report** with verdict ratings (PLAY / SOLID / CONDITIONAL / AVOID)
-- **Champion intel vault** with matchup context and counter recommendations
-- **Item and Component intel** with an entire breakdown of stats, costs, passives, etc
+- **Verdict per game** — names the primary loss factor or win enabler, with evidence and lessons
+- **Worst / Best patterns** — mines observations across all your games to find what's costing you the most
+- **Champion pool health** — rates each champion as PLAY / SOLID / CONDITIONAL / AVOID
+- **Scout any player** — analyze another player by Riot ID with the same pipeline
+- **Enemy scout** — live Spectator API integration for pre-game intelligence
+- **Matchup breakdowns** — per-champion win rates, stat diffs, and counter-pick data
+- **Win impact analysis** — statistical impact of each pattern on your win rate
 
-## Setup
+## Quick Start
 
-### 1. Prerequisites
+### Prerequisites
 
 - Python 3.10+
-- A Riot API key — get one at [developer.riotgames.com](https://developer.riotgames.com/)
+- A Riot API key from [developer.riotgames.com](https://developer.riotgames.com/)
 
-### 2. Clone the repo
-
-```bash
-git clone https://github.com/YOURUSER/facecheck.git
-cd facecheck
-```
-
-### 3. Configure your API key
+### Setup
 
 ```bash
-copy config.py config_local.py
-# Edit config_local.py and set:
-#   API_KEY = "RGAPI-..."
-#   MY_GAME_NAME = "YourSummonerName"
-#   MY_TAG_LINE  = "YourTag"
+git clone https://github.com/Kudakore/Verdict.git
+cd Verdict
+pip install requests fastapi uvicorn
 ```
 
-### 4. Install dependencies
+Create a `.env` file in the project root:
 
-```bash
-pip install requests
+```
+VERDICT_API_KEY=RGAPI-your-key-here
+VERDICT_REGION=americas
+VERDICT_PLATFORM=na1
+VERDICT_GAME_NAME=YourName
+VERDICT_TAG_LINE=YourTag
 ```
 
-### 5. Run
+### Fetch your games
 
 ```powershell
-python facecheck_game.py lastgame
-python facecheck_game.py pool
-python facecheck_game.py scout YourName#YourTag
+python verdict_game.py fetch
 ```
+
+### CLI Commands
+
+```
+verdict fetch [N] [--force]    Fetch and cache ranked games
+verdict lastgame                Deep dive on most recent game
+verdict game N                  Deep dive on game N
+verdict games [N]               Last N games with compact synthesis
+verdict worst [champ]           What is costing you games
+verdict best [champ]            What is working
+verdict pool [N]                Champion pool health report
+verdict matchups [champ]        Matchup breakdown
+verdict bans                    Counter pool tracker
+verdict heatmap                 Time-of-game death analysis
+verdict pathing                 Jungle camp efficiency
+verdict impact                  Win impact analysis
+verdict scout Name#Tag [N]      Analyze any player
+verdict compare Name#Tag [N]    Delta comparison vs another player
+verdict enemy                   Live enemy scout (Spectator API)
+verdict counter [champ]         How to beat a champion
+verdict intel [champ]           Full champion intel profile
+verdict item [name]             Item stats and build path
+verdict builds [champ]          Item winrate analysis
+verdict recent [solo|flex] [N]  Match history table
+verdict select [champ]          Browse and pick a game
+```
+
+### API Server
+
+```powershell
+python verdict_server.py
+```
+
+Starts a FastAPI server on `localhost:8420` with 24 endpoints under `/api/v1/`. Built for the upcoming Tauri desktop app, but works with any HTTP client.
+
+```
+GET  /api/v1/health          Server status
+GET  /api/v1/config          Player identity and region
+GET  /api/v1/cache           Cached game summary
+POST /api/v1/fetch           Fetch games from Riot API
+GET  /api/v1/worst           Worst patterns analysis
+GET  /api/v1/best            Best patterns analysis
+GET  /api/v1/pool            Champion pool health
+GET  /api/v1/game/{n}        Single game verdict
+GET  /api/v1/games           Compact game list
+GET  /api/v1/matchups        Matchup breakdown
+GET  /api/v1/bans            Ban recommendations
+GET  /api/v1/heatmap         Death timing heatmap
+GET  /api/v1/pathing         Jungle pathing efficiency
+GET  /api/v1/recent          Match history
+GET  /api/v1/impact          Win impact analysis
+POST /api/v1/scout           Scout any player
+POST /api/v1/compare         Compare two players
+POST /api/v1/enemy           Enemy scout
+GET  /api/v1/live            Current Spectator game
+GET  /api/v1/counter/{champ} Counter recommendations
+GET  /api/v1/intel/{champ}   Champion intel profile
+GET  /api/v1/builds/{champ}  Item winrate analysis
+GET  /api/v1/select          Paginated game browser
+GET  /api/v1/guide           Playing guide
+```
+
+## Architecture
+
+```
+Riot API
+    |
+    v
+verdict_data.py              Game fetching, caching, Riot API calls
+    |
+    v
+7 Domain Engines              Pure extraction — describe what happened
+    |                          (Death, Economy, Combat, Durability, Vision, Objective, Draft)
+    v
+verdict_synthesis.py          Correlates all engine outputs into verdicts
+    |                          relative to personal baselines (not generic thresholds)
+    v
+verdict_service.py            AnalysisService — single pipeline entry point
+    |                          Runs engines once, caches all results
+    v
+verdict_server.py             FastAPI HTTP interface (localhost:8420)
+    |
+    v
+Tauri Desktop App (upcoming)
+```
+
+Engines are purely extractive — they describe what happened structurally, they do not judge whether it was good or bad. The synthesis layer consumes all engine outputs and generates verdicts relative to your personal baselines.
 
 ## Project Structure
 
 | File | Purpose |
 |------|---------|
-| `facecheck_data.py` | Riot API calls, cache read/write |
-| `facecheck_game.py` | CLI entry point |
-| `facecheck_engine_*.py` | 7 domain-pure extraction engines |
-| `facecheck_synthesis.py` | Correlates engine outputs into verdicts |
-| `facecheck_analysis.py` | Legacy analysis system |
-| `facecheck_diagnosis.py` | Human-readable output formatting |
-| `facecheck_champ_intel.py` | Champion vault reader |
-| `facecheck_scout.py` | Scout any player by Riot ID |
-| `facecheck_player_model.py` | Persistent personal baselines |
-| `config.py` | API key and player identity |
-
-## Architecture
-
-Engines are **purely extractive** — they describe what happened structurally, they do not judge whether it was good or bad. Synthesis layer consumes all engine outputs and generates verdicts relative to your personal baselines.
+| `verdict_server.py` | FastAPI HTTP server (Phase 4) |
+| `verdict_service.py` | AnalysisService — cached pipeline entry point |
+| `verdict_game.py` | CLI entry point and mode dispatch |
+| `verdict_game_model.py` | Game dataclass with from_dict/to_dict |
+| `verdict_data.py` | Riot API, cache management, match record building |
+| `verdict_synthesis.py` | SynthesisLayer, Verdict, MultiEngineOutput |
+| `verdict_engine_*.py` | 7 domain-pure extraction engines |
+| `verdict_engine_base.py` | Distribution, EngineOutput, run_engine_from_cache |
+| `verdict_engine_cache.py` | Engine output caching (24h auto-invalidation) |
+| `verdict_similarity.py` | Behavioral fingerprinting and game similarity |
+| `verdict_player_model.py` | Per-player baselines and pattern memory |
+| `verdict_win_impact.py` | Statistical win impact analysis |
+| `verdict_aggregate.py` | Observation mining, worst/best/pool analysis |
+| `verdict_special.py` | Specialized modes (matchups, bans, heatmap, scout, etc.) |
+| `verdict_display.py` | Rendering functions (data/display split) |
+| `verdict_champ_intel.py` | Champion intelligence and counter recommendations |
+| `verdict_item.py` | Item lookup and build analysis |
+| `verdict_config.py` | Config single source of truth (env > .env > config.py) |
+| `verdict_paths.py` | Centralized path configuration |
+| `league_vault.py` | Champion data vault builder (Data Dragon) |
+| `LeagueVault/` | Generated champion knowledge base |
+| `tests/` | 60 integration tests |
 
 ## License
 

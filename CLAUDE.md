@@ -29,6 +29,7 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `verdict_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory (per-player caching via _player_model_path)
 - `verdict_win_impact.py` — WinImpactEngine, WinImpactSignature, CompensatingFactor (batch statistical impact analysis across games. Wired into AnalysisService via `analyze_win_impact()` and CLI via `verdict impact`)
 - `verdict_config.py` — Config single source of truth (exports API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE from env vars > .env > config.py; ensure_config() returns bool)
+- `verdict_server.py` — FastAPI HTTP server (localhost:8420). Own-player AnalysisService cached in AppState, scout/enemy per-request. All sync analysis runs in thread executor. Background fetch support. 24 endpoints under /api/v1/.
 - `tests/` — 60 integration tests (test_game_model, test_engine_base, test_config, test_engines, test_synthesis)
 - `verdict_paths.py` — Centralized path configuration (DATA_DIR env var, all paths derived from it)
 - `verdict_data.py` — Riot API, cache management, match record building, get_ranked_games, fetch_player_games (scout), resolve_riot_id, get_current_game (Spectator v5), resolve_puuid_to_riot_id
@@ -107,7 +108,7 @@ All commands available via `verdict`, `v`, or `face` (legacy alias):
 - **Synthesis decomposition** (DONE): Verdict output channels now use structured dataclasses. CombatProfile/DurabilityProfile/VisionProfile replace untyped dicts from `_get_profile_features()`. Summary returns `Summary` with `List[SummarySection]` (domain, statement, data) instead of joined string. Divergences return `List[Divergence]` (divergence_type, statement, data, win) instead of `List[str]`. Dead `_build_explanation_multi()` removed. `Verdict.explanation` field removed.
 - **Config to .env** (DONE): `verdict_config.py` is the single source of truth for all config values. No module imports from `config.py` directly. `.env` file is primary config path, `config.py` is secondary fallback. `ensure_config()` returns `True`/`False` instead of `sys.exit(1)`. CLI entry point handles exit explicitly.
 - **Test suite** (DONE): 60 integration tests across 5 files. Session-scoped fixtures load real cache data. Tests cover Game round-trip, Distribution serialization, config loading, engine shapes, distribution key contracts, typed profiles, Verdict output, render_verdict, observation producers.
-- **Phase 4** (PLANNED): FastAPI Server
+- **Phase 4** (DONE): FastAPI Server — verdict_server.py exposes 24 endpoints on localhost:8420. Own-player AnalysisService cached in AppState, invalidated on fetch. Background fetch with polling. All analysis runs in thread executor.
 - **Phase 5** (PLANNED): Tauri Shell
 - **Phase 6** (PLANNED): Frontend Views
 

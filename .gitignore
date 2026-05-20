@@ -32,6 +32,7 @@ engine_cache/
 # Scout cache
 scout_cache/
 
-# Legacy cache files (pre-rename)
-facecheck_cache.json
-facecheck_brain.json
+# Python
+*.egg-info/
+dist/
+build/

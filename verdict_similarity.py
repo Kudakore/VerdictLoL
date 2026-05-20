@@ -26,6 +26,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
 from verdict_game_model import Game
+from verdict_paths import CACHE_PATH
 
 
 # ────────────────────────────────────────────────────────────────
@@ -1122,7 +1123,7 @@ def run_similarity_engine(games=None, cache_path=None) -> Optional[SimilarityOut
     if games is not None:
         engine = SimilarityEngine()
         return engine.analyze(games)
-    cache_path = cache_path or r"C:\Facecheck\verdict_cache.json"
+    cache_path = cache_path or CACHE_PATH
     try:
         with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)
@@ -1142,7 +1143,7 @@ def run_similarity_engine(games=None, cache_path=None) -> Optional[SimilarityOut
 if __name__ == "__main__":
     # Load cache
     try:
-        with open(r"C:\Facecheck\verdict_cache.json", 'r', encoding='utf-8') as f:
+        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
             cache = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         print("No data available.")
