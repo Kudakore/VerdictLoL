@@ -464,8 +464,7 @@ def render_game(game: Game, game_number=None, historical_games=None, legacy=Fals
     if SYNTHESIS_AVAILABLE and historical_games and not legacy:
         try:
             if not player_id:
-                from verdict_config import ensure_config; ensure_config()
-                from config import MY_GAME_NAME, MY_TAG_LINE
+                from verdict_config import MY_GAME_NAME, MY_TAG_LINE
                 player_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
                 header["player_id"] = player_id
 

@@ -1,15 +1,17 @@
 """
-Config auto-setup — ensures config.py exists before any module tries to import it.
+Config — single source of truth for all Verdict configuration.
 
 Priority for config values:
 1. Environment variables (VERDICT_API_KEY, VERDICT_REGION, etc.)
 2. .env file in DATA_DIR
-3. config.py (auto-created from config_template.py if missing)
+3. config.py in DATA_DIR (auto-created from config_template.py if missing)
 
-Called from verdict_data.py and standalone league scripts.
+All modules should import config values from here:
+    from verdict_config import API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE
+
+No module should import from `config` directly.
 """
 import os
-import sys
 import shutil
 
 from verdict_paths import DATA_DIR
@@ -17,6 +19,7 @@ from verdict_paths import DATA_DIR
 _CONFIG = os.path.join(DATA_DIR, "config.py")
 _TEMPLATE = os.path.join(DATA_DIR, "config_template.py")
 _ENV_FILE = os.path.join(DATA_DIR, ".env")
+
 
 def _load_dotenv():
     """Load .env file if it exists. Simple parser — no external dependency."""
@@ -34,22 +37,54 @@ def _load_dotenv():
                 if key and key not in os.environ:
                     os.environ[key] = value
 
-def ensure_config():
-    """Create config.py from template if missing; validate it has real values.
 
-    Returns True if config is valid, False if placeholder values remain.
+def _load_from_config_py():
+    """Fallback: load values from config.py if env vars are empty."""
+    api_key = os.environ.get("VERDICT_API_KEY", "")
+    game_name = os.environ.get("VERDICT_GAME_NAME", "")
+    tag_line = os.environ.get("VERDICT_TAG_LINE", "")
+
+    if api_key and game_name and tag_line:
+        return  # env vars cover everything, no need for config.py
+
+    if not os.path.exists(_CONFIG):
+        return
+
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_config", _CONFIG)
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if not api_key:
+                os.environ.setdefault("VERDICT_API_KEY", getattr(mod, "API_KEY", ""))
+            if not game_name:
+                os.environ.setdefault("VERDICT_GAME_NAME", getattr(mod, "MY_GAME_NAME", ""))
+            if not tag_line:
+                os.environ.setdefault("VERDICT_TAG_LINE", getattr(mod, "MY_TAG_LINE", ""))
+    except Exception:
+        pass
+
+
+# --- Load config on import ---
+_load_dotenv()
+_load_from_config_py()
+
+# Exported config values (env vars > .env > config.py)
+API_KEY = os.environ.get("VERDICT_API_KEY", "")
+REGION = os.environ.get("VERDICT_REGION", "americas")
+PLATFORM = os.environ.get("VERDICT_PLATFORM", "na1")
+MY_GAME_NAME = os.environ.get("VERDICT_GAME_NAME", "")
+MY_TAG_LINE = os.environ.get("VERDICT_TAG_LINE", "")
+
+
+def ensure_config():
+    """Validate that required config values are present.
+
+    Returns True if config is valid, False if missing.
     Does NOT call sys.exit — callers decide how to handle invalid config.
     """
-    _load_dotenv()
-
-    # If env vars provide everything, config.py is optional
-    env_api_key = os.environ.get("VERDICT_API_KEY", "")
-    env_region = os.environ.get("VERDICT_REGION", "")
-    env_platform = os.environ.get("VERDICT_PLATFORM", "")
-    env_name = os.environ.get("VERDICT_GAME_NAME", "")
-    env_tag = os.environ.get("VERDICT_TAG_LINE", "")
-
-    # Create config.py from template if it doesn't exist
+    # Auto-create config.py from template if it doesn't exist (for manual setup)
     if not os.path.exists(_CONFIG):
         if os.path.exists(_TEMPLATE):
             shutil.copy2(_TEMPLATE, _CONFIG)
@@ -58,26 +93,18 @@ def ensure_config():
             print("  Get your key at: https://developer.riotgames.com/")
             print()
 
-    # Check if config.py still has placeholder values
-    config_valid = True
-    if os.path.exists(_CONFIG):
-        with open(_CONFIG, encoding="utf-8") as f:
-            content = f.read()
-        if "YOUR_RIOT_API_KEY_HERE" in content:
-            config_valid = False
+    # Check if config has real values
+    has_api_key = bool(API_KEY) and API_KEY != "YOUR_RIOT_API_KEY_HERE"
+    has_identity = bool(MY_GAME_NAME) and bool(MY_TAG_LINE)
 
-    # Config is valid if either env vars or config.py provide real values
-    has_env_config = bool(env_api_key and env_name and env_tag)
-    has_file_config = config_valid
-
-    if has_env_config or has_file_config:
+    if has_api_key and has_identity:
         return True
 
-    # Neither source has valid config
+    # Missing config — print guidance
     print("  Verdict needs your Riot API key and summoner name.")
     print("  Set environment variables:")
     print("    VERDICT_API_KEY, VERDICT_REGION, VERDICT_PLATFORM, VERDICT_GAME_NAME, VERDICT_TAG_LINE")
     print("  Or create a .env file in the project directory.")
     print(f"  Or edit {_CONFIG} directly.")
     print("  Get your API key at: https://developer.riotgames.com/")
-    sys.exit(1)
+    return False

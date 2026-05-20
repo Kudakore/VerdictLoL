@@ -90,8 +90,9 @@ if __name__ == "__main__":
 
     ranked = get_ranked_games(cache, champion=champion)
     historical = get_ranked_games(cache)  # unfiltered for context
-    from verdict_config import ensure_config; ensure_config()
-    from config import MY_GAME_NAME, MY_TAG_LINE
+    from verdict_config import ensure_config, MY_GAME_NAME, MY_TAG_LINE
+    if not ensure_config():
+        sys.exit(1)
     player_id = f"{MY_GAME_NAME}#{MY_TAG_LINE}"
 
     if mode == "last":

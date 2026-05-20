@@ -23,7 +23,7 @@ All engines return `EngineOutput` with:
 | `death_timing` | `g.death_minutes` (flattened) | NOT consumed by synthesis |
 | `early_deaths` | `g.early_deaths` | NOT consumed by synthesis |
 | `longest_living` | `g.longest_living` | NOT consumed by synthesis |
-| `time_spent_dead` | `g.time_spent_dead` | NOT consumed by synthesis |
+| `time_spent_dead` | `g.time_spent_dead` | NOT produced by engine |
 
 ### Economy Engine
 | Key | Source | Consumed By |

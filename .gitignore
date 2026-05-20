@@ -24,6 +24,7 @@ C ScriptsCC-Session-Logs/
 # Local config — contains API key
 config.py
 config_local.py
+.env
 
 # Engine cache
 engine_cache/

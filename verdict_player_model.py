@@ -14,9 +14,8 @@ import statistics
 from collections import defaultdict
 
 from verdict_game_model import Game
-from verdict_config import ensure_config; ensure_config()
+from verdict_config import MY_GAME_NAME, MY_TAG_LINE
 from verdict_paths import BRAIN_PATH, SCOUT_DIR, CACHE_PATH
-from config import MY_GAME_NAME, MY_TAG_LINE
 
 
 @dataclass

@@ -28,7 +28,8 @@ All 7 domain-pure extraction engines accept `(games, player_id)` as explicit par
 - `verdict_similarity.py` — SimilarityEngine, GameFingerprint, ClusterResult, PatternResult
 - `verdict_player_model.py` — PlayerModel, PlayerBaseline, PatternMemory (per-player caching via _player_model_path)
 - `verdict_win_impact.py` — WinImpactEngine, WinImpactSignature, CompensatingFactor (batch statistical impact analysis across games. Wired into AnalysisService via `analyze_win_impact()` and CLI via `verdict impact`)
-- `verdict_config.py` — Config auto-setup (creates config.py from template if missing, validates placeholders)
+- `verdict_config.py` — Config single source of truth (exports API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE from env vars > .env > config.py; ensure_config() returns bool)
+- `tests/` — 60 integration tests (test_game_model, test_engine_base, test_config, test_engines, test_synthesis)
 - `verdict_paths.py` — Centralized path configuration (DATA_DIR env var, all paths derived from it)
 - `verdict_data.py` — Riot API, cache management, match record building, get_ranked_games, fetch_player_games (scout), resolve_riot_id, get_current_game (Spectator v5), resolve_puuid_to_riot_id
 - `verdict_item.py` — Item and component lookup, champion build analysis (analyze_champ_builds + print_champ_builds)
@@ -104,6 +105,8 @@ All commands available via `verdict`, `v`, or `face` (legacy alias):
 - **Producer calibration** (DONE): Counter-pick split into countered/blind_pick (was 97.8% fire rate). Baseline fallbacks removed. 4 new producers: economy, vision, objectives, kill participation. Severity scaling on death cluster/chain. Side signals removed from win_impact.
 - **Engine contracts** (DONE): Documented in docs/engine-contracts.md. 11/40+ distribution keys consumed, 10/30+ signature types consumed, objective engine unused by synthesis, draft has no distributions.
 - **Synthesis decomposition** (DONE): Verdict output channels now use structured dataclasses. CombatProfile/DurabilityProfile/VisionProfile replace untyped dicts from `_get_profile_features()`. Summary returns `Summary` with `List[SummarySection]` (domain, statement, data) instead of joined string. Divergences return `List[Divergence]` (divergence_type, statement, data, win) instead of `List[str]`. Dead `_build_explanation_multi()` removed. `Verdict.explanation` field removed.
+- **Config to .env** (DONE): `verdict_config.py` is the single source of truth for all config values. No module imports from `config.py` directly. `.env` file is primary config path, `config.py` is secondary fallback. `ensure_config()` returns `True`/`False` instead of `sys.exit(1)`. CLI entry point handles exit explicitly.
+- **Test suite** (DONE): 60 integration tests across 5 files. Session-scoped fixtures load real cache data. Tests cover Game round-trip, Distribution serialization, config loading, engine shapes, distribution key contracts, typed profiles, Verdict output, render_verdict, observation producers.
 - **Phase 4** (PLANNED): FastAPI Server
 - **Phase 5** (PLANNED): Tauri Shell
 - **Phase 6** (PLANNED): Frontend Views
@@ -123,7 +126,8 @@ All commands available via `verdict`, `v`, or `face` (legacy alias):
 - G4: Always ask "can this be better?"
 
 ### Known Issues
-- config.py is gitignored (contains API key) — auto-created from config_template.py on first run via verdict_config.py
+- config.py is gitignored (contains API key) — .env is primary config path, config.py is secondary fallback via verdict_config.py
+- Domain: verdictlol.com purchased for the project
 - Counter-pick observation fires at 97.8% of losses — likely too broad, needs producer tuning (next: producer calibration)
 - `verdict enemy` not tested in a live game — Spectator API behavior during champ select is untested
 - `verdict enemy` not tested in a live game — Spectator API behavior during champ select is untested

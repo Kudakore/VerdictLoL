@@ -6,11 +6,8 @@ import time
 from datetime import datetime
 
 from verdict_game_model import Game, PlayerStats, TeamObjectives, JunglePathing
-from verdict_config import ensure_config
-ensure_config()
-
+from verdict_config import API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE
 from verdict_paths import CACHE_PATH, SCOUT_DIR
-from config import API_KEY, REGION, PLATFORM, MY_GAME_NAME, MY_TAG_LINE
 GAME_NAME = MY_GAME_NAME
 TAG_LINE  = MY_TAG_LINE
 
