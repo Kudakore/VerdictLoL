@@ -20,15 +20,84 @@ POSITIONS = {
     "BOTTOM": "BOT", "UTILITY": "SUPPORT", "": "N/A"
 }
 
-_last_request_time = 0
+# ── Adaptive rate limiter ──────────────────────────────────────────
+# Riot API limits: 20 req/s (development key), 100 req/s (personal key).
+# Instead of a flat 1.5s delay per request, we use a sliding window:
+#   - Track timestamps of recent requests
+#   - If well within budget, fire immediately (no delay)
+#   - If approaching the limit, add minimal delay to stay within budget
+#   - If we get a 429, back off and retry
+#
+# For small batches (under 20 requests), this runs at full speed.
+# For large batches (fetch 50+ games), it throttles to stay within limits.
+
+_RATE_WINDOW = 1.0          # sliding window in seconds
+_RATE_MAX_REQUESTS = 20      # max requests per window (conservative for dev key)
+_RATE_MIN_DELAY = 0.05       # minimum gap between requests (50ms)
+_RATE_RETRY_DELAY = 2.0      # base delay on 429 response
+_RATE_RETRY_MAX = 3          # max retries on 429
+
+_request_timestamps = []
+_429_backoff_until = 0
+
 
 def rate_limited_get(url):
-    global _last_request_time
-    elapsed = time.time() - _last_request_time
-    if elapsed < 1.5:
-        time.sleep(1.5 - elapsed)
-    _last_request_time = time.time()
-    return requests.get(url, headers=HEADERS)
+    """Make a rate-limited GET request to the Riot API.
+
+    Uses adaptive throttling:
+    - Tracks recent requests in a sliding window
+    - Fires immediately if well within budget
+    - Adds minimal delay if approaching the limit
+    - Backs off on 429 responses
+    """
+    global _429_backoff_until
+
+    # If we're in a 429 backoff period, wait it out
+    if _429_backoff_until:
+        wait = _429_backoff_until - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _429_backoff_until = 0
+
+    # Clean old timestamps outside the window
+    now = time.time()
+    global _request_timestamps
+    _request_timestamps = [t for t in _request_timestamps if now - t < _RATE_WINDOW]
+
+    # Calculate delay needed to stay within budget
+    requests_in_window = len(_request_timestamps)
+    if requests_in_window >= _RATE_MAX_REQUESTS:
+        # At capacity — wait until oldest request falls out of window
+        oldest = _request_timestamps[0]
+        wait = _RATE_WINDOW - (now - oldest) + _RATE_MIN_DELAY
+        if wait > 0:
+            time.sleep(wait)
+        now = time.time()
+        _request_timestamps = [t for t in _request_timestamps if now - t < _RATE_WINDOW]
+    elif requests_in_window > 0:
+        # Some requests in window — ensure minimum gap
+        last_request = _request_timestamps[-1]
+        gap = now - last_request
+        if gap < _RATE_MIN_DELAY:
+            time.sleep(_RATE_MIN_DELAY - gap)
+    # else: first request, no delay
+
+    now = time.time()
+    _request_timestamps.append(now)
+
+    # Make the request with 429 retry logic
+    for attempt in range(_RATE_RETRY_MAX):
+        resp = requests.get(url, headers=HEADERS)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", _RATE_RETRY_DELAY))
+            _429_backoff_until = time.time() + retry_after
+            if attempt < _RATE_RETRY_MAX - 1:
+                time.sleep(retry_after)
+                _429_backoff_until = 0
+                continue
+        return resp
+
+    return resp
 
 def get_puuid():
     url = f"https://{REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{GAME_NAME}/{TAG_LINE}"
