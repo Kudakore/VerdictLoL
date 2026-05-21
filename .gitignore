@@ -36,3 +36,9 @@ scout_cache/
 *.egg-info/
 dist/
 build/
+
+# Node / Tauri
+node_modules/
+src-tauri/target/
+src-tauri/gen/schemas/
+dist/
